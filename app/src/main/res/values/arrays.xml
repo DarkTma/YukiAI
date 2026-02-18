@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="tts_languages">
+        <item>Русский</item>
+        <item>English</item>
+        <item>日本語</item>
+    </string-array>
+</resources>

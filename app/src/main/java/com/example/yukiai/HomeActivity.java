@@ -5,6 +5,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.Matrix;
+import android.graphics.SurfaceTexture;
 import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.Bundle;
@@ -17,6 +19,8 @@ import android.util.Log;
 import android.view.GestureDetector;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
+import android.view.Surface;
+import android.view.TextureView;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
@@ -50,6 +54,7 @@ import java.util.Collections;
 import java.util.Deque;
 import java.util.List;
 import java.util.Locale;
+import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -67,6 +72,8 @@ public class HomeActivity extends AppCompatActivity {
 
     // --- UI Элементы ---
     private VideoView bgVideoView;
+    private MediaPlayer mediaPlayerBackground; // Отдельный плеер для видео фона
+    private Surface videoSurface;
     private ImageView bgImageView;
     private View touchLayer;
     private TextView textDialogue; // Оставляем ОДНУ переменную для текста
@@ -83,7 +90,7 @@ public class HomeActivity extends AppCompatActivity {
     private String teacherSettings =
             "SYSTEM INSTRUCTION:\n" +
                     "Ты — Юки. Ты — дружелюбный репетитор и собеседник для практики языка.\n" +
-                    "Отвечай кратко (до 5 предложений), позитивно, исправляй ошибки пользователя в конце сообщения в скобках.";
+                    "Отвечай кратко (до 5 предложений), позитивно.";
 
     // --- Переменные для анимации текста ---
     private List<String> replyChunks = new ArrayList<>();
@@ -104,73 +111,181 @@ public class HomeActivity extends AppCompatActivity {
     private final Deque<DialoguePair> memory = new ArrayDeque<>();
     private static final int MEMORY_LIMIT = 5;
     private boolean isDialogueActive = false;
+    private LinearLayout dialogueBox;
+
+    private Handler idleHandler = new Handler(Looper.getMainLooper());
+    private Runnable idleRunnable;
+    private final long IDLE_DELAY = 20000; // 20 секунд
+    private boolean isSpeaking = false; // Флаг, чтобы анимация спокойствия не перебила озвучку
+    private int[] idleVideos = {R.raw.yawn}; // Список ваших видео спокойствия
+
+
+    private void playBackgroundVideo(int videoResId, boolean isLooping) {
+        runOnUiThread(() -> {
+            // 1. Устанавливаем прозрачность видео в 0, чтобы оно было невидимым при запуске
+            bgVideoView.setAlpha(0f);
+            bgVideoView.setVisibility(View.VISIBLE);
+
+            Uri uri = Uri.parse("android.resource://" + getPackageName() + "/" + videoResId);
+            bgVideoView.setVideoURI(uri);
+
+            bgVideoView.setOnPreparedListener(mp -> {
+                // ... (твой старый код масштабирования scaleX/scaleY остается здесь) ...
+                float videoWidth = mp.getVideoWidth();
+                float videoHeight = mp.getVideoHeight();
+                float viewWidth = bgVideoView.getWidth();
+                float viewHeight = bgVideoView.getHeight();
+                float videoRatio = videoWidth / videoHeight;
+                float screenRatio = viewWidth / viewHeight;
+                float scaleX = (videoRatio > screenRatio) ? (videoRatio / screenRatio) : 1f;
+                float scaleY = (videoRatio > screenRatio) ? 1f : (screenRatio / videoRatio);
+                bgVideoView.setScaleX(scaleX);
+                bgVideoView.setScaleY(scaleY);
+
+                mp.setLooping(isLooping);
+                bgVideoView.start();
+
+                // 2. Плавное появление видео и исчезновение картинки
+                bgVideoView.animate()
+                        .alpha(1f)
+                        .setDuration(500) // Длительность перехода (0.5 сек)
+                        .start();
+
+                bgImageView.animate()
+                        .alpha(0f)
+                        .setDuration(500)
+                        .withEndAction(() -> bgImageView.setVisibility(View.INVISIBLE))
+                        .start();
+            });
+
+            // Обработка завершения (для разовых анимаций, например, зевка)
+            bgVideoView.setOnCompletionListener(mp -> {
+                if (!isLooping) {
+                    switchToDefaultAnimation();
+                    resetIdleTimer();
+                }
+            });
+
+            // Защита от вылетов при ошибках воспроизведения
+            bgVideoView.setOnErrorListener((mp, what, extra) -> {
+                Log.e("YukiDebug", "Ошибка VideoView: " + what + ", " + extra);
+                switchToDefaultAnimation();
+                return true;
+            });
+        });
+    }
+
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_home);
 
-        // 1. Инициализация UI
+        // 1. Инициализация UI (Просто находим VideoView)
         bgVideoView = findViewById(R.id.bgVideoView);
         bgImageView = findViewById(R.id.bgImageView);
         touchLayer = findViewById(R.id.touchLayer);
-        speakerName = findViewById(R.id.speakerName); // Проверь ID в XML (обычно textName)
+        dialogueBox = findViewById(R.id.dialogueBox);
+        speakerName = findViewById(R.id.speakerName);
         textDialogue = findViewById(R.id.textDialogue);
 
-        ImageButton btnSettings = findViewById(R.id.btnSettings);
-        btnSettings.setOnClickListener(v -> openSettingsDialog());
+        // 2. Инициализация AI и кнопок
+        npcAI = new GeminiClient(BuildConfig.GEMINI_API_KEY);
 
-//        findViewById(R.id.btnCheckGrammar).setOnClickListener(v -> {
-//            checkGrammar();
-//        });
-//
-//        ImageButton btnPlayVoice = findViewById(R.id.btnPlayVoice);
-//
-//        btnPlayVoice.setOnClickListener(v -> {
-//            replayLastAudio();
-//        });
-//
-//        findViewById(R.id.btnTranslateUI).setOnClickListener(v -> {
-//            showTranslationMenu();
-//        });
+        findViewById(R.id.btnSettings).setOnClickListener(v -> openSettingsDialog());
+        findViewById(R.id.btnPlayVoice).setOnClickListener(v -> replayLastAudio());
+        findViewById(R.id.btnTranslateUI).setOnClickListener(v -> showTranslationMenu());
+        findViewById(R.id.btnCheckGrammar).setOnClickListener(v -> checkGrammar());
+        findViewById(R.id.btnMinimize).setOnClickListener(v -> hideDialogue());
 
-        // api_key
-        String myApiKey = BuildConfig.GEMINI_API_KEY;
-
-// Инициализируем клиент
-        npcAI = new GeminiClient(myApiKey);
-
-        // 2. ИНИЦИАЛИЗАЦИЯ AI (ВАЖНО!)
-        // Замени "YOUR_API_KEY" на твой ключ или убери аргумент, если ключ внутри класса
-        npcAI = new GeminiClient(myApiKey);
-
-        // 3. Настройка жестов
+        // 3. Настройка жестов (Остается как было)
         gestureDetector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
             @Override
             public boolean onDoubleTap(MotionEvent e) {
                 openNpcDialog();
                 return true;
             }
-
             @Override
             public boolean onSingleTapConfirmed(MotionEvent e) {
-                if (isDialogueActive) {
-                    showNextChunk();
-                }
+                handleGeneralTap();
                 return true;
             }
         });
 
         touchLayer.setOnTouchListener((v, event) -> {
+            resetIdleTimer();
             gestureDetector.onTouchEvent(event);
             return true;
         });
 
-        // 4. Настройка видео фона
-        bgVideoView.setOnPreparedListener(mp -> mp.setLooping(true));
+        dialogueBox.setOnClickListener(v -> {
+            resetIdleTimer();
+            handleGeneralTap();
+        });
 
-        // Пример запуска фона (если нужно сразу)
-        // setBackgroundVideo(R.raw.intro_video);
+        // 4. Запуск таймера
+        // Теперь нам не нужно ждать "готовности" поверхности.
+        // VideoView сам разберется, когда начать играть после вызова playBackgroundVideo.
+        idleRunnable = this::startIdleAnimation;
+        switchToDefaultAnimation();
+        resetIdleTimer();
+    }
+
+
+
+
+
+
+    private void startIdleAnimation() {
+        if (isSpeaking) return;
+        int randomVideo = idleVideos[new Random().nextInt(idleVideos.length)];
+        playBackgroundVideo(randomVideo, false);
+    }
+
+    private void resetIdleTimer() {
+        idleHandler.removeCallbacks(idleRunnable);
+        if (!isSpeaking && bgVideoView.getVisibility() == View.VISIBLE) {
+            switchToDefaultAnimation();
+        }
+        idleHandler.postDelayed(idleRunnable, IDLE_DELAY);
+    }
+
+    private void switchToVideoBackground() {
+        playBackgroundVideo(R.raw.talanimation, true);
+    }
+
+
+
+    private void handleGeneralTap() {
+        if (dialogueBox.getVisibility() == View.GONE) {
+            // Если скрыто — показываем
+            showDialogue();
+        } else {
+            // Если открыто — идем к следующему чанку
+            showNextChunk();
+        }
+    }
+
+    private void hideDialogue() {
+        dialogueBox.animate()
+                .alpha(0f)
+                .translationY(50f) // Слегка уходит вниз
+                .setDuration(250)
+                .withEndAction(() -> dialogueBox.setVisibility(View.GONE))
+                .start();
+    }
+
+    private void showDialogue() {
+        dialogueBox.setVisibility(View.VISIBLE);
+        dialogueBox.setAlpha(0f);
+        dialogueBox.setTranslationY(50f);
+
+        dialogueBox.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setDuration(250)
+                .start();
     }
 
     private void openNpcDialog() {
@@ -207,6 +322,83 @@ public class HomeActivity extends AppCompatActivity {
         });
 
         dialog.show();
+    }
+
+    private void replayLastAudio() {
+        if (lastAudioPath == null) {
+            Log.w("TTS", "Нет сохраненного аудио для повтора");
+            return;
+        }
+
+        File file = new File(lastAudioPath);
+        if (!file.exists()) {
+            Log.e("TTS", "Файл аудио больше не существует");
+            return;
+        }
+
+        try {
+            MediaPlayer mediaPlayer = new MediaPlayer();
+            mediaPlayer.setDataSource(lastAudioPath);
+            mediaPlayer.prepare();
+            mediaPlayer.start();
+
+            // Освобождаем память после проигрывания
+            mediaPlayer.setOnCompletionListener(mp -> {
+                mp.release();
+            });
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void switchToDefaultAnimation() {
+        runOnUiThread(() -> {
+            // Убедимся, что ImageView скрыта, так как она нам больше не нужна как основной фон
+            bgImageView.animate().alpha(0f).setDuration(400).withEndAction(() -> bgImageView.setVisibility(View.INVISIBLE)).start();
+
+            // Запускаем стандартную анимацию в бесконечном цикле (isLooping = true)
+            playBackgroundVideo(R.raw.standartanimation, true);
+        });
+    }
+
+    private void checkGrammar() {
+        if (lastPlayerText == null || lastPlayerText.isEmpty()) {
+            animateText("Сначала напиши что-нибудь, чтобы я могла проверить! 😊");
+            return;
+        }
+
+        animateText("Проверяю... 📝");
+
+        // Формируем строгий промпт для проверки
+        String grammarPrompt = "Ты — эксперт по лингвистике и учитель. Проверь следующее сообщение на ошибки в грамматике, " +
+                "пунктуации и стиле: \"" + lastPlayerText + "\". \n\n" +
+                "Твоя задача: \n" +
+                "1. Найди ошибки, если они есть. \n" +
+                "2. Объясни правила простыми словами. \n" +
+                "3. Предложи правильный вариант. \n" +
+                "КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО отвечать на само сообщение или продолжать диалог как персонаж. " +
+                "Только сухая проверка и объяснение.";
+
+        // Отправляем запрос
+        npcAI.generate(grammarPrompt, "заботливый учитель", new NpcCallback() {
+            @Override
+            public void onUpdate(String partialText) { /* можно игнорировать */ }
+
+            @Override
+            public void onComplete(String finalText) {
+                // Разделяем длинный ответ учителя на чанки и анимируем
+                splitReplyIntoChunks(finalText, 120);
+                if (!replyChunks.isEmpty()) {
+                    animateText(replyChunks.get(0));
+                }
+                scrollImage.setOnClickListener(v -> showNextChunk());
+            }
+
+            @Override
+            public void onError(String errorMsg) {
+                animateText("Ой, не удалось проверить текст... 😵");
+            }
+        });
     }
 
     private void sendMessageToNpc(String playerText) {
@@ -267,6 +459,39 @@ public class HomeActivity extends AppCompatActivity {
                 runOnUiThread(() -> animateText("Ошибка сети... 😵"));
                 Log.e("NpcAI", errorMsg);
             }
+        });
+    }
+
+    private void showTranslationMenu() {
+        // Варианты выбора
+        String[] languages = {"Русский", "English"};
+        String[] codes = {"ru", "en"};
+
+        new AlertDialog.Builder(this)
+                .setTitle("Перевести на:")
+                .setItems(languages, (dialog, which) -> {
+                    String targetLang = codes[which];
+                    // Запускаем процесс перевода
+                    translateCurrentDialogue(targetLang);
+                })
+                .show();
+    }
+
+    private void translateCurrentDialogue(String targetLang) {
+        // Берем текст, который сейчас отображен в диалоге
+        String textToTranslate = lastText;
+
+        if (textToTranslate == null || textToTranslate.isEmpty()) return;
+
+        executor.execute(() -> {
+            // Используем твой метод translateFromRu, но он универсальный для Google API
+            // так как Google сам определяет исходный язык (auto-detect)
+            String translated = translateFromRu(textToTranslate, targetLang);
+
+            mainHandler.post(() -> {
+                // Останавливаем текущую анимацию и запускаем новую с переводом
+                animateText(translated);
+            });
         });
     }
 
@@ -344,6 +569,8 @@ public class HomeActivity extends AppCompatActivity {
 
     // --- TTS Methods (Оставил твои, они выглядят рабочими) ---
     private void speakJapanese(String text, VoiceVoxCallback callback) throws IOException {
+        isSpeaking = true;
+        idleHandler.removeCallbacks(idleRunnable); // Останавливаем таймер ожидания
         String voiceVoxUrl = "http://192.168.1.8:50021";
         String speaker = "1";
         executor.execute(() -> {
@@ -372,18 +599,36 @@ public class HomeActivity extends AppCompatActivity {
                 try (FileOutputStream fos = new FileOutputStream(tempFile)) { fos.write(audioBytes); }
                 lastAudioPath = tempFile.getAbsolutePath();
 
-                callback.onAudioReady();
+                // В основном потоке обновляем UI, когда аудио готово
+                runOnUiThread(() -> callback.onAudioReady());
 
                 MediaPlayer mediaPlayer = new MediaPlayer();
                 mediaPlayer.setDataSource(tempFile.getAbsolutePath());
                 mediaPlayer.prepare();
+
+                // 1. Устанавливаем слушатель завершения, чтобы вернуть фото после голоса
+                mediaPlayer.setOnCompletionListener(mp -> {
+                    switchToDefaultAnimation(); // <--- ДОБАВИТЬ (возврат к фото)
+                    resetIdleTimer(); // <--- Снова запускаем отсчет 15 секунд после того, как речь закончилась
+                    mp.release();
+                });
+
+                // 2. Включаем видео и запускаем звук
+                switchToVideoBackground(); // <--- ДОБАВИТЬ (запуск видео)
                 mediaPlayer.start();
-            } catch (Exception e) { e.printStackTrace(); }
+
+            } catch (Exception e) {
+                e.printStackTrace();
+                switchToDefaultAnimation(); // На случай ошибки возвращаем фото
+            }
         });
     }
 
     private void speakCoqui(String text, String language, VoiceVoxCallback callback) {
+        isSpeaking = true;
+        idleHandler.removeCallbacks(idleRunnable); // Останавливаем таймер ожидания
         String coquiUrl = "http://192.168.1.8:5002/api/tts";
+
         executor.execute(() -> {
             try {
                 OkHttpClient client = new OkHttpClient.Builder()
@@ -392,17 +637,30 @@ public class HomeActivity extends AppCompatActivity {
 
                 JSONObject json = new JSONObject();
                 String finalText = text;
-                String voiceFile = "voices/mita.wav";
+                String voiceFile = "voices/roxy.wav"; // По умолчанию для RU
 
+                // Логика выбора голоса и перевода
                 if ("en".equals(language)) {
                     finalText = translateFromRu(text, "en");
                     voiceFile = "voices/raiden.wav";
                 }
-                json.put("text", finalText);
-                json.put("language", language);
-                json.put("speaker_wav", voiceFile);
+                else if ("fr".equals(language)) {
+                    // ДОБАВЛЕНО: Французский язык
+                    finalText = translateFromRu(text, "fr");
+                    voiceFile = "voices/french.wav"; // Убедись, что этот файл есть на сервере!
+                }
 
-                RequestBody body = RequestBody.create(json.toString().getBytes(StandardCharsets.UTF_8), MediaType.get("application/json; charset=utf-8"));
+                json.put("text", finalText);
+                json.put("language", language); // Код "fr" отправится на сервер
+                json.put("speaker_wav", voiceFile);
+                if ("fr".equals(language)) {
+                    json.put("speed", 0.9); // Французский звучит лучше, если он чуть медленнее
+                } else {
+                    json.put("speed", 1.1);
+                }
+
+                RequestBody body = RequestBody.create(json.toString().getBytes(StandardCharsets.UTF_8),
+                        MediaType.get("application/json; charset=utf-8"));
                 Request request = new Request.Builder().url(coquiUrl).post(body).build();
                 Response response = client.newCall(request).execute();
 
@@ -420,18 +678,40 @@ public class HomeActivity extends AppCompatActivity {
                 }
 
                 lastAudioPath = tempFile.getAbsolutePath();
-                MediaPlayer mediaPlayer = new MediaPlayer();
-                mediaPlayer.setDataSource(tempFile.getAbsolutePath());
-                mediaPlayer.prepare();
-                mediaPlayer.start();
-                mediaPlayer.setOnCompletionListener(mp -> {
-                    mp.release();
-                    callback.onAudioReady();
+
+                // Запуск аудио и видео в основном потоке
+                runOnUiThread(() -> {
+                    try {
+                        MediaPlayer mediaPlayer = new MediaPlayer();
+                        mediaPlayer.setDataSource(lastAudioPath);
+                        mediaPlayer.prepare();
+
+                        mediaPlayer.setOnCompletionListener(mp -> {
+                            isSpeaking = false; // Не забываем сбрасывать флаг
+                            switchToDefaultAnimation();
+                            resetIdleTimer();
+                            mp.release();
+                            callback.onAudioReady();
+                        });
+
+                        // Включаем видео-фон перед стартом
+                        switchToVideoBackground();
+                        mediaPlayer.start();
+
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                        isSpeaking = false;
+                    }
                 });
 
-            } catch (Exception e) { callback.onError(e); }
+            } catch (Exception e) {
+                isSpeaking = false;
+                callback.onError(e);
+            }
         });
     }
+
+
 
     // --- Animation & Text Logic ---
 
@@ -555,6 +835,7 @@ public class HomeActivity extends AppCompatActivity {
         switch (lang) {
             case 1: return "en";
             case 2: return "ja";
+            case 3: return "fr";
             default: return "ru";
         }
     }

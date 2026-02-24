@@ -100,6 +100,11 @@ public class HomeActivity extends AppCompatActivity {
     private String currentText = "";
     private boolean textFullyDisplayed = false;
 
+    private boolean isSpeaking = false;
+    private int[] idleVideos = {R.raw.yawn};
+    // ДОБАВИТЬ ЭТУ СТРОКУ:
+    private int currentVideoResId = -1;
+
     // --- Аудио ---
     private String lastAudioPath = null;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -116,13 +121,14 @@ public class HomeActivity extends AppCompatActivity {
     private Handler idleHandler = new Handler(Looper.getMainLooper());
     private Runnable idleRunnable;
     private final long IDLE_DELAY = 20000; // 20 секунд
-    private boolean isSpeaking = false; // Флаг, чтобы анимация спокойствия не перебила озвучку
-    private int[] idleVideos = {R.raw.yawn}; // Список ваших видео спокойствия
+
 
 
     private void playBackgroundVideo(int videoResId, boolean isLooping) {
         runOnUiThread(() -> {
-            // 1. Устанавливаем прозрачность видео в 0, чтобы оно было невидимым при запуске
+            // Запоминаем, какое видео сейчас включилось
+            currentVideoResId = videoResId;
+
             bgVideoView.setAlpha(0f);
             bgVideoView.setVisibility(View.VISIBLE);
 
@@ -130,25 +136,48 @@ public class HomeActivity extends AppCompatActivity {
             bgVideoView.setVideoURI(uri);
 
             bgVideoView.setOnPreparedListener(mp -> {
-                // ... (твой старый код масштабирования scaleX/scaleY остается здесь) ...
+                // Отключаем звук
+                mp.setVolume(0f, 0f);
+
                 float videoWidth = mp.getVideoWidth();
                 float videoHeight = mp.getVideoHeight();
-                float viewWidth = bgVideoView.getWidth();
-                float viewHeight = bgVideoView.getHeight();
-                float videoRatio = videoWidth / videoHeight;
-                float screenRatio = viewWidth / viewHeight;
-                float scaleX = (videoRatio > screenRatio) ? (videoRatio / screenRatio) : 1f;
-                float scaleY = (videoRatio > screenRatio) ? 1f : (screenRatio / videoRatio);
-                bgVideoView.setScaleX(scaleX);
-                bgVideoView.setScaleY(scaleY);
+
+                // Берем абсолютные (реальные) размеры экрана телефона
+                android.util.DisplayMetrics metrics = new android.util.DisplayMetrics();
+                getWindowManager().getDefaultDisplay().getRealMetrics(metrics);
+                float screenWidth = metrics.widthPixels;
+                float screenHeight = metrics.heightPixels;
+
+                // 1. Делаем саму "рамку" VideoView СТРОГО по размеру экрана
+                android.view.ViewGroup.LayoutParams params = bgVideoView.getLayoutParams();
+                params.width = (int) screenWidth;
+                params.height = (int) screenHeight;
+                bgVideoView.setLayoutParams(params);
+
+                // Обязательно сбрасываем сдвиг (который мы делали в прошлой версии)
+                bgVideoView.setTranslationX(0f);
+                bgVideoView.setTranslationY(0f);
+
+                // 2. Узнаем, как Android изначально попытался вписать видео (с черными полосами)
+                float fitScale = Math.min(screenWidth / videoWidth, screenHeight / videoHeight);
+                float drawnWidth = videoWidth * fitScale;
+                float drawnHeight = videoHeight * fitScale;
+
+                // 3. Вычисляем идеальный ЗУМ, чтобы видео покрыло весь экран без черных полос
+                float scale = Math.max(screenWidth / drawnWidth, screenHeight / drawnHeight);
+
+                // 4. Применяем зум. Так как точка масштабирования (pivot) по умолчанию находится
+                // ровно в центре экрана, видео ИДЕАЛЬНО обрежется по бокам!
+                bgVideoView.setScaleX(scale);
+                bgVideoView.setScaleY(scale);
 
                 mp.setLooping(isLooping);
                 bgVideoView.start();
 
-                // 2. Плавное появление видео и исчезновение картинки
+                // Плавное появление
                 bgVideoView.animate()
                         .alpha(1f)
-                        .setDuration(500) // Длительность перехода (0.5 сек)
+                        .setDuration(500)
                         .start();
 
                 bgImageView.animate()
@@ -157,8 +186,6 @@ public class HomeActivity extends AppCompatActivity {
                         .withEndAction(() -> bgImageView.setVisibility(View.INVISIBLE))
                         .start();
             });
-
-            // Обработка завершения (для разовых анимаций, например, зевка)
             bgVideoView.setOnCompletionListener(mp -> {
                 if (!isLooping) {
                     switchToDefaultAnimation();
@@ -166,7 +193,6 @@ public class HomeActivity extends AppCompatActivity {
                 }
             });
 
-            // Защита от вылетов при ошибках воспроизведения
             bgVideoView.setOnErrorListener((mp, what, extra) -> {
                 Log.e("YukiDebug", "Ошибка VideoView: " + what + ", " + extra);
                 switchToDefaultAnimation();
@@ -182,7 +208,7 @@ public class HomeActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_home);
 
-        // 1. Инициализация UI (Просто находим VideoView)
+        // 1. Инициализация UI
         bgVideoView = findViewById(R.id.bgVideoView);
         bgImageView = findViewById(R.id.bgImageView);
         touchLayer = findViewById(R.id.touchLayer);
@@ -190,9 +216,25 @@ public class HomeActivity extends AppCompatActivity {
         speakerName = findViewById(R.id.speakerName);
         textDialogue = findViewById(R.id.textDialogue);
 
+        // --- ДОБАВИТЬ ВОТ ЭТОТ БЛОК ---
+        // Жестко фиксируем размер VideoView по реальным пикселям экрана
+        android.util.DisplayMetrics metrics = new android.util.DisplayMetrics();
+        getWindowManager().getDefaultDisplay().getRealMetrics(metrics);
+
+        android.view.ViewGroup.LayoutParams params = bgVideoView.getLayoutParams();
+        params.width = metrics.widthPixels;
+        params.height = metrics.heightPixels;
+        bgVideoView.setLayoutParams(params);
+
+        // (Опционально) То же самое для bgImageView, чтобы картинка тоже не прыгала
+        android.view.ViewGroup.LayoutParams imgParams = bgImageView.getLayoutParams();
+        imgParams.width = metrics.widthPixels;
+        imgParams.height = metrics.heightPixels;
+        bgImageView.setLayoutParams(imgParams);
+        // -------------------------------
+
         // 2. Инициализация AI и кнопок
         npcAI = new GeminiClient(BuildConfig.GEMINI_API_KEY);
-
         findViewById(R.id.btnSettings).setOnClickListener(v -> openSettingsDialog());
         findViewById(R.id.btnPlayVoice).setOnClickListener(v -> replayLastAudio());
         findViewById(R.id.btnTranslateUI).setOnClickListener(v -> showTranslationMenu());
@@ -245,9 +287,12 @@ public class HomeActivity extends AppCompatActivity {
 
     private void resetIdleTimer() {
         idleHandler.removeCallbacks(idleRunnable);
-        if (!isSpeaking && bgVideoView.getVisibility() == View.VISIBLE) {
+
+        // ВАЖНОЕ ИЗМЕНЕНИЕ: Возвращаем дефолт ТОЛЬКО если сейчас играет НЕ он
+        if (!isSpeaking && bgVideoView.getVisibility() == View.VISIBLE && currentVideoResId != R.raw.standartanimation) {
             switchToDefaultAnimation();
         }
+
         idleHandler.postDelayed(idleRunnable, IDLE_DELAY);
     }
 
@@ -571,7 +616,7 @@ public class HomeActivity extends AppCompatActivity {
     private void speakJapanese(String text, VoiceVoxCallback callback) throws IOException {
         isSpeaking = true;
         idleHandler.removeCallbacks(idleRunnable); // Останавливаем таймер ожидания
-        String voiceVoxUrl = "http://192.168.1.8:50021";
+        String voiceVoxUrl = "http://91.205.196.207:50021";
         String speaker = "1";
         executor.execute(() -> {
             try {
@@ -584,13 +629,19 @@ public class HomeActivity extends AppCompatActivity {
 
                 Request queryRequest = new Request.Builder().url(url).post(RequestBody.create(new byte[0])).build();
                 Response queryResponse = client.newCall(queryRequest).execute();
-                if (!queryResponse.isSuccessful() || queryResponse.body() == null) return;
+                if (!queryResponse.isSuccessful() || queryResponse.body() == null) {
+                    isSpeaking = false;
+                    return;
+                }
 
                 String queryResult = queryResponse.body().string();
                 RequestBody synthBody = RequestBody.create(queryResult, MediaType.get("application/json; charset=utf-8"));
                 Request synthRequest = new Request.Builder().url(voiceVoxUrl + "/synthesis?speaker=1").post(synthBody).build();
                 Response synthResponse = client.newCall(synthRequest).execute();
-                if (!synthResponse.isSuccessful() || synthResponse.body() == null) return;
+                if (!synthResponse.isSuccessful() || synthResponse.body() == null) {
+                    isSpeaking = false;
+                    return;
+                };
 
                 byte[] audioBytes = synthResponse.body().bytes();
                 if (lastAudioPath != null) new File(lastAudioPath).delete();
@@ -608,6 +659,7 @@ public class HomeActivity extends AppCompatActivity {
 
                 // 1. Устанавливаем слушатель завершения, чтобы вернуть фото после голоса
                 mediaPlayer.setOnCompletionListener(mp -> {
+                    isSpeaking = false;
                     switchToDefaultAnimation(); // <--- ДОБАВИТЬ (возврат к фото)
                     resetIdleTimer(); // <--- Снова запускаем отсчет 15 секунд после того, как речь закончилась
                     mp.release();
@@ -627,7 +679,7 @@ public class HomeActivity extends AppCompatActivity {
     private void speakCoqui(String text, String language, VoiceVoxCallback callback) {
         isSpeaking = true;
         idleHandler.removeCallbacks(idleRunnable); // Останавливаем таймер ожидания
-        String coquiUrl = "http://192.168.1.8:5002/api/tts";
+        String coquiUrl = "http://91.205.196.207:5002/api/tts";
 
         executor.execute(() -> {
             try {
@@ -665,6 +717,7 @@ public class HomeActivity extends AppCompatActivity {
                 Response response = client.newCall(request).execute();
 
                 if (!response.isSuccessful() || response.body() == null) {
+                    isSpeaking = false;
                     callback.onError(new Exception("Server error"));
                     return;
                 }
@@ -691,12 +744,13 @@ public class HomeActivity extends AppCompatActivity {
                             switchToDefaultAnimation();
                             resetIdleTimer();
                             mp.release();
-                            callback.onAudioReady();
                         });
 
                         // Включаем видео-фон перед стартом
                         switchToVideoBackground();
                         mediaPlayer.start();
+
+                        callback.onAudioReady();
 
                     } catch (IOException e) {
                         e.printStackTrace();

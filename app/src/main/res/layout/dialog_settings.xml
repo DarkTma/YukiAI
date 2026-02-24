@@ -58,6 +58,16 @@
         android:minHeight="48dp"
         android:layout_marginBottom="24dp"/>
 
+    <Button
+        android:id="@+id/btnStartHelper"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Запустить режим помощника"
+        android:textColor="#000000"
+        android:backgroundTint="#75c3ff"
+        android:textStyle="bold"
+        android:layout_marginBottom="24dp"/>
+
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

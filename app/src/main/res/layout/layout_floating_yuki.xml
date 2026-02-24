@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/floating_root"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content">
+
+    <TextView
+        android:id="@+id/yuki_message"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="@drawable/bg_dialogue_style"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:padding="12dp"
+        android:layout_toStartOf="@+id/yuki_head_container"
+        android:layout_centerVertical="true"
+        android:layout_marginEnd="8dp"
+        android:visibility="gone"
+        android:elevation="4dp"
+        android:text="c2c4" />
+
+    <FrameLayout
+        android:id="@+id/yuki_head_container"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentEnd="true">
+
+        <ImageView
+            android:id="@+id/yuki_head"
+            android:layout_width="60dp"
+            android:layout_height="60dp"
+            android:src="@drawable/ic_launcher_foreground"
+            android:background="@drawable/bg_dialogue_style"
+            android:elevation="4dp"/>
+
+        <ImageView
+            android:id="@+id/btn_close_floating"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@android:drawable/ic_menu_close_clear_cancel"
+            android:background="#FF5252"
+            android:layout_gravity="top|end"/>
+    </FrameLayout>
+
+</RelativeLayout>

@@ -9,6 +9,7 @@ import android.graphics.Matrix;
 import android.graphics.SurfaceTexture;
 import android.media.MediaPlayer;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -67,6 +68,12 @@ import okhttp3.Protocol;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
+import android.provider.Settings;
+import android.net.Uri;
+import android.media.projection.MediaProjectionManager;
+
+
+
 
 public class HomeActivity extends AppCompatActivity {
 
@@ -123,6 +130,8 @@ public class HomeActivity extends AppCompatActivity {
     private final long IDLE_DELAY = 20000; // 20 секунд
 
 
+    private MediaProjectionManager projectionManager;
+    private static final int REQUEST_MEDIA_PROJECTION = 1005;
 
     private void playBackgroundVideo(int videoResId, boolean isLooping) {
         runOnUiThread(() -> {
@@ -216,6 +225,9 @@ public class HomeActivity extends AppCompatActivity {
         speakerName = findViewById(R.id.speakerName);
         textDialogue = findViewById(R.id.textDialogue);
 
+
+        projectionManager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+
         // --- ДОБАВИТЬ ВОТ ЭТОТ БЛОК ---
         // Жестко фиксируем размер VideoView по реальным пикселям экрана
         android.util.DisplayMetrics metrics = new android.util.DisplayMetrics();
@@ -276,6 +288,50 @@ public class HomeActivity extends AppCompatActivity {
 
 
 
+
+
+
+
+    private void startFloatingYuki() {
+        if (!Settings.canDrawOverlays(this)) {
+            Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:" + getPackageName()));
+            startActivityForResult(intent, 2002);
+        } else {
+            // Если окно разрешено, запрашиваем запись экрана
+            startActivityForResult(projectionManager.createScreenCaptureIntent(), REQUEST_MEDIA_PROJECTION);
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+
+        // Если разрешили рисовать поверх окон, сразу просим запись экрана
+        if (requestCode == 2002) {
+            if (Settings.canDrawOverlays(this)) {
+                startActivityForResult(projectionManager.createScreenCaptureIntent(), REQUEST_MEDIA_PROJECTION);
+            } else {
+                animateText("Мне нужно разрешение, чтобы появляться поверх других окон! 🥺");
+            }
+        }
+
+        // Если разрешили запись экрана — запускаем Юки!
+        if (requestCode == REQUEST_MEDIA_PROJECTION) {
+            if (resultCode == RESULT_OK && data != null) {
+                Intent serviceIntent = new Intent(this, FloatingYukiService.class);
+                serviceIntent.putExtra("code", resultCode);
+                serviceIntent.putExtra("data", data); // Передаем данные для захвата в сервис
+
+                // На новых Android сервисы переднего плана запускаются так:
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(serviceIntent);
+                }
+            } else {
+                animateText("Без доступа к экрану я не смогу увидеть доску... ♟️");
+            }
+        }
+    }
 
 
 
@@ -906,6 +962,9 @@ public class HomeActivity extends AppCompatActivity {
         Button btnSave = view.findViewById(R.id.btnSave);
         Button btnCancel = view.findViewById(R.id.btnCancel);
 
+        // Инициализируем элементы внутри View (Добавь строку ниже)
+        Button btnStartHelper = view.findViewById(R.id.btnStartHelper);
+
         // 3. Настраиваем Спиннер с белым текстом
         // Важно: используем R.layout.spinner_item (который мы создали в Шаге 1)
         ArrayAdapter<CharSequence> adapter = ArrayAdapter.createFromResource(
@@ -938,6 +997,11 @@ public class HomeActivity extends AppCompatActivity {
         if (dialog.getWindow() != null) {
             dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
         }
+
+        btnStartHelper.setOnClickListener(v -> {
+            dialog.dismiss(); // Закрываем окно настроек
+            startFloatingYuki(); // Запускаем проверку разрешений и сам сервис
+        });
 
         // 6. Логика кнопок
         btnSave.setOnClickListener(v -> {

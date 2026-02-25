@@ -957,10 +957,13 @@ public class HomeActivity extends AppCompatActivity {
         // 2. Инициализируем элементы внутри View
         RadioGroup genderGroup = view.findViewById(R.id.voiceGenderGroup);
         RadioButton female = view.findViewById(R.id.voiceFemale);
-//        RadioButton male = view.findViewById(R.id.voiceMale);
+        RadioGroup colorGroup = view.findViewById(R.id.colorGroup);
         Spinner languageSpinner = view.findViewById(R.id.languageSpinner);
         Button btnSave = view.findViewById(R.id.btnSave);
         Button btnCancel = view.findViewById(R.id.btnCancel);
+
+        RadioButton colorWhite = view.findViewById(R.id.colorWhite);
+        RadioButton colorBlack = view.findViewById(R.id.colorBlack);
 
         // Инициализируем элементы внутри View (Добавь строку ниже)
         Button btnStartHelper = view.findViewById(R.id.btnStartHelper);
@@ -977,6 +980,10 @@ public class HomeActivity extends AppCompatActivity {
 
         // 4. Загружаем сохраненные настройки
         SharedPreferences prefs = getSharedPreferences("npc_settings", Context.MODE_PRIVATE);
+        boolean isBlack = prefs.getBoolean("playing_as_black", false);
+
+        if (isBlack) colorBlack.setChecked(true);
+        else colorWhite.setChecked(true);
         String gender = prefs.getString("voice_gender", "female");
         int language = prefs.getInt("voice_language", 0);
 
@@ -999,12 +1006,17 @@ public class HomeActivity extends AppCompatActivity {
         }
 
         btnStartHelper.setOnClickListener(v -> {
-            dialog.dismiss(); // Закрываем окно настроек
-            startFloatingYuki(); // Запускаем проверку разрешений и сам сервис
+            // Сохраняем сторону ПЕРЕД запуском
+            boolean selectedAsBlack = colorGroup.getCheckedRadioButtonId() == R.id.colorBlack;
+            prefs.edit().putBoolean("playing_as_black", selectedAsBlack).apply();
+
+            dialog.dismiss();
+            startFloatingYuki();
         });
 
         // 6. Логика кнопок
         btnSave.setOnClickListener(v -> {
+            boolean selectedAsBlack = colorGroup.getCheckedRadioButtonId() == R.id.colorBlack;
             String selectedGender =
                     genderGroup.getCheckedRadioButtonId() == R.id.voiceFemale
                             ? "female" : "male";
@@ -1014,7 +1026,9 @@ public class HomeActivity extends AppCompatActivity {
             prefs.edit()
                     .putString("voice_gender", selectedGender)
                     .putInt("voice_language", selectedLanguage)
+                    .putBoolean("playing_as_black", selectedAsBlack)
                     .apply();
+
 
             Toast.makeText(this, "Настройки сохранены", Toast.LENGTH_SHORT).show();
             dialog.dismiss();

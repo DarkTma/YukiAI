@@ -9,9 +9,8 @@
 
     <TextView
         android:id="@+id/yuki_message"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginEnd="-10dp"
+        android:layout_width="250dp" android:layout_height="wrap_content"
+        android:maxHeight="120dp" android:scrollbars="vertical" android:fadeScrollbars="false" android:layout_marginEnd="-10dp"
         android:layout_marginBottom="10dp"
         android:layout_toStartOf="@+id/yuki_head"
         android:layout_alignBottom="@+id/yuki_head"
@@ -44,5 +43,37 @@
         android:elevation="10dp"
         android:padding="4dp"
         android:src="@android:drawable/ic_menu_close_clear_cancel" />
+
+    <LinearLayout
+        android:id="@+id/input_layout"
+        android:layout_width="250dp"
+        android:layout_height="wrap_content"
+        android:layout_below="@+id/yuki_head"
+        android:layout_alignEnd="@+id/yuki_head"
+        android:layout_marginTop="5dp"
+        android:background="@drawable/bg_dialogue_style"
+        android:orientation="horizontal"
+        android:padding="8dp"
+        android:visibility="gone"
+        android:elevation="6dp">
+
+        <EditText
+            android:id="@+id/yuki_input"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:background="@android:color/transparent"
+            android:hint="Спросить Юки..."
+            android:textColor="#FFFFFF"
+            android:textColorHint="#AAAAAA"
+            android:textSize="14sp"
+            android:maxLines="3" />
+
+        <ImageView
+            android:id="@+id/btn_send"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:padding="4dp"
+            android:src="@android:drawable/ic_menu_send" /> </LinearLayout>
 
 </RelativeLayout>

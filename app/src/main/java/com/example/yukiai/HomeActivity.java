@@ -92,6 +92,9 @@ public class HomeActivity extends AppCompatActivity {
     private static final int REQ_RECORD_AUDIO = 1001;
     private SpeechRecognizer speechRecognizer;
 
+    private static final int REQUEST_MEDIA_PROJECTION_CHESS = 1001;
+    private static final int REQUEST_MEDIA_PROJECTION_GAME = 1002;
+
     // --- AI и Настройки ---
     private GeminiClient npcAI; // Не забудь инициализировать!
     private String teacherSettings =
@@ -106,6 +109,8 @@ public class HomeActivity extends AppCompatActivity {
     private int charIndex = 0;
     private String currentText = "";
     private boolean textFullyDisplayed = false;
+
+    private int pendingProjectionCode = -1;
 
     private boolean isSpeaking = false;
     private int[] idleVideos = {R.raw.yawn};
@@ -292,14 +297,28 @@ public class HomeActivity extends AppCompatActivity {
 
 
 
+    // Запуск шахматной Юки
     private void startFloatingYuki() {
         if (!Settings.canDrawOverlays(this)) {
             Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                     Uri.parse("package:" + getPackageName()));
             startActivityForResult(intent, 2002);
         } else {
-            // Если окно разрешено, запрашиваем запись экрана
-            startActivityForResult(projectionManager.createScreenCaptureIntent(), REQUEST_MEDIA_PROJECTION);
+            // Передаем код CHESS
+            startActivityForResult(projectionManager.createScreenCaptureIntent(), REQUEST_MEDIA_PROJECTION_CHESS);
+        }
+    }
+
+    // Запуск геймерской Юки
+    private void startGameYuki() {
+        if (!Settings.canDrawOverlays(this)) {
+            Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:" + getPackageName()));
+            // Запрашиваем окно поверх других
+            startActivityForResult(intent, 2002);
+        } else {
+            // Передаем код GAME
+            startActivityForResult(projectionManager.createScreenCaptureIntent(), REQUEST_MEDIA_PROJECTION_GAME);
         }
     }
 
@@ -307,28 +326,50 @@ public class HomeActivity extends AppCompatActivity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
 
-        // Если разрешили рисовать поверх окон, сразу просим запись экрана
+        // 1. Если только что разрешили рисовать поверх окон
         if (requestCode == 2002) {
             if (Settings.canDrawOverlays(this)) {
-                startActivityForResult(projectionManager.createScreenCaptureIntent(), REQUEST_MEDIA_PROJECTION);
+                // Если разрешение дали, запускаем запись экрана с нужным кодом!
+                if (pendingProjectionCode != -1) {
+                    startActivityForResult(projectionManager.createScreenCaptureIntent(), pendingProjectionCode);
+                    pendingProjectionCode = -1; // Сбрасываем память
+                }
             } else {
                 animateText("Мне нужно разрешение, чтобы появляться поверх других окон! 🥺");
             }
         }
 
-        // Если разрешили запись экрана — запускаем Юки!
-        if (requestCode == REQUEST_MEDIA_PROJECTION) {
+        // 2. Если разрешили запись экрана для ШАХМАТ
+        if (requestCode == REQUEST_MEDIA_PROJECTION_CHESS) {
             if (resultCode == RESULT_OK && data != null) {
                 Intent serviceIntent = new Intent(this, FloatingYukiService.class);
                 serviceIntent.putExtra("code", resultCode);
-                serviceIntent.putExtra("data", data); // Передаем данные для захвата в сервис
+                serviceIntent.putExtra("data", data);
 
-                // На новых Android сервисы переднего плана запускаются так:
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     startForegroundService(serviceIntent);
+                } else {
+                    startService(serviceIntent);
                 }
             } else {
                 animateText("Без доступа к экрану я не смогу увидеть доску... ♟️");
+            }
+        }
+
+        // 3. Если разрешили запись экрана для ИГР
+        if (requestCode == REQUEST_MEDIA_PROJECTION_GAME) {
+            if (resultCode == RESULT_OK && data != null) {
+                Intent serviceIntent = new Intent(this, FloatingGameYukiService.class); // Наш новый сервис!
+                serviceIntent.putExtra("code", resultCode);
+                serviceIntent.putExtra("data", data);
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(serviceIntent);
+                } else {
+                    startService(serviceIntent);
+                }
+            } else {
+                animateText("Без доступа к экрану я не смогу комментировать игру... 🎮");
             }
         }
     }
@@ -965,11 +1006,12 @@ public class HomeActivity extends AppCompatActivity {
         RadioButton colorWhite = view.findViewById(R.id.colorWhite);
         RadioButton colorBlack = view.findViewById(R.id.colorBlack);
 
-        // Инициализируем элементы внутри View (Добавь строку ниже)
         Button btnStartHelper = view.findViewById(R.id.btnStartHelper);
 
+        // ДОБАВЛЯЕМ НАШУ НОВУЮ КНОПКУ
+        Button btnGameYuki = view.findViewById(R.id.btnGameYuki);
+
         // 3. Настраиваем Спиннер с белым текстом
-        // Важно: используем R.layout.spinner_item (который мы создали в Шаге 1)
         ArrayAdapter<CharSequence> adapter = ArrayAdapter.createFromResource(
                 this,
                 R.array.tts_languages,
@@ -984,11 +1026,11 @@ public class HomeActivity extends AppCompatActivity {
 
         if (isBlack) colorBlack.setChecked(true);
         else colorWhite.setChecked(true);
+
         String gender = prefs.getString("voice_gender", "female");
         int language = prefs.getInt("voice_language", 0);
 
         if (gender.equals("female")) female.setChecked(true);
-//        else male.setChecked(true);
 
         if (language < adapter.getCount()) {
             languageSpinner.setSelection(language);
@@ -1000,27 +1042,28 @@ public class HomeActivity extends AppCompatActivity {
                 .setCancelable(true)
                 .create();
 
-        // Делаем фон системного окна прозрачным, чтобы виден был только наш bg_dialogue_style
         if (dialog.getWindow() != null) {
             dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
         }
 
+        // Логика кнопки шахматной Юки
         btnStartHelper.setOnClickListener(v -> {
-            // Сохраняем сторону ПЕРЕД запуском
             boolean selectedAsBlack = colorGroup.getCheckedRadioButtonId() == R.id.colorBlack;
             prefs.edit().putBoolean("playing_as_black", selectedAsBlack).apply();
-
             dialog.dismiss();
             startFloatingYuki();
         });
 
-        // 6. Логика кнопок
+        // ЛОГИКА НОВОЙ КНОПКИ ДЛЯ ГЕЙМЕРСКОЙ ЮКИ
+        btnGameYuki.setOnClickListener(v -> {
+            dialog.dismiss(); // Просто закрываем настройки
+            startGameYuki();  // Вызываем метод запуска (его нужно будет создать)
+        });
+
+        // 6. Логика кнопок сохранения и отмены
         btnSave.setOnClickListener(v -> {
             boolean selectedAsBlack = colorGroup.getCheckedRadioButtonId() == R.id.colorBlack;
-            String selectedGender =
-                    genderGroup.getCheckedRadioButtonId() == R.id.voiceFemale
-                            ? "female" : "male";
-
+            String selectedGender = genderGroup.getCheckedRadioButtonId() == R.id.voiceFemale ? "female" : "male";
             int selectedLanguage = languageSpinner.getSelectedItemPosition();
 
             prefs.edit()
@@ -1028,7 +1071,6 @@ public class HomeActivity extends AppCompatActivity {
                     .putInt("voice_language", selectedLanguage)
                     .putBoolean("playing_as_black", selectedAsBlack)
                     .apply();
-
 
             Toast.makeText(this, "Настройки сохранены", Toast.LENGTH_SHORT).show();
             dialog.dismiss();

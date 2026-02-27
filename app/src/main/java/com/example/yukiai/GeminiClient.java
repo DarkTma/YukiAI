@@ -22,6 +22,12 @@ import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+import java.io.ByteArrayOutputStream;
+import android.graphics.Bitmap;
+import android.util.Base64;
+
 import android.graphics.Bitmap;
 import android.util.Base64;
 import java.io.ByteArrayOutputStream;
@@ -135,50 +141,131 @@ public class GeminiClient {
         });
     }
 
+    // Поле класса
+    private JSONArray chatHistory = new JSONArray();
+
+    public void clearMemory() {
+        chatHistory = new JSONArray();
+    }
+
     public void generateWithImage(String prompt, Bitmap bitmap, @NonNull NpcCallback callback) {
-        // 1. Сжимаем картинку и переводим в текст (Base64)
-        // Выполняем это в отдельном потоке, чтобы не тормозить интерфейс при конвертации
         new Thread(() -> {
             try {
+                // 1. Оптимизируем историю: удаляем старые картинки перед добавлением новой
+                for (int i = 0; i < chatHistory.length(); i++) {
+                    JSONObject message = chatHistory.getJSONObject(i);
+                    if ("user".equals(message.getString("role"))) {
+                        JSONArray parts = message.getJSONArray("parts");
+                        JSONArray textOnlyParts = new JSONArray();
+                        boolean removedImage = false;
+
+                        // Перебираем части старого сообщения
+                        for (int j = 0; j < parts.length(); j++) {
+                            JSONObject part = parts.getJSONObject(j);
+                            if (part.has("text")) {
+                                textOnlyParts.put(part); // Оставляем текст
+                            } else if (part.has("inline_data")) {
+                                removedImage = true; // Нашли и удаляем картинку
+                            }
+                        }
+
+                        // Оставляем Юки "воспоминание" о том, что тут был скриншот
+                        if (removedImage) {
+                            textOnlyParts.put(new JSONObject().put("text", "[Скриншот экрана]"));
+                        }
+                        message.put("parts", textOnlyParts); // Перезаписываем части без Base64
+                    }
+                }
+
+                // 2. Сжимаем НОВУЮ картинку
                 ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                // 80% качества - отличный баланс: фигуры видно четко, а вес файла маленький
                 bitmap.compress(Bitmap.CompressFormat.JPEG, 80, baos);
                 byte[] imageBytes = baos.toByteArray();
-
-                // NO_WRAP очень важен, иначе переносы строк сломают JSON
                 String base64Image = Base64.encodeToString(imageBytes, Base64.NO_WRAP);
 
-                // 2. Собираем JSON
-                JSONObject jsonBody = new JSONObject();
+                // 3. Формируем новое сообщение от пользователя
+                JSONObject userContent = new JSONObject();
+                userContent.put("role", "user");
 
-                JSONObject textPart = new JSONObject().put("text", prompt);
-                JSONObject imagePart = new JSONObject().put("inline_data", new JSONObject()
+                JSONArray newPartsArray = new JSONArray();
+                if (prompt != null && !prompt.isEmpty()) {
+                    newPartsArray.put(new JSONObject().put("text", prompt));
+                }
+                newPartsArray.put(new JSONObject().put("inline_data", new JSONObject()
                         .put("mime_type", "image/jpeg")
-                        .put("data", base64Image));
+                        .put("data", base64Image)));
 
-                // Кладем и текст, и картинку в один массив parts
-                JSONArray partsArray = new JSONArray()
-                        .put(textPart)
-                        .put(imagePart);
+                userContent.put("parts", newPartsArray);
+                chatHistory.put(userContent);
 
-                JSONObject userContent = new JSONObject()
-                        .put("role", "user")
-                        .put("parts", partsArray);
+                // 4. Ограничиваем память (последние 12 пар = 24 сообщения)
+                // Если сообщений больше 24, удаляем самое старое (индекс 0)
+                while (chatHistory.length() > 24) {
+                    // В Android API JSONArray.remove() доступен с API 19, что нам отлично подходит
+                    chatHistory.remove(0);
+                }
 
-                jsonBody.put("contents", new JSONArray().put(userContent));
+                // 5. Собираем итоговый JSON для отправки
+                JSONObject jsonBody = new JSONObject();
+                jsonBody.put("contents", chatHistory);
 
-                // Настройки генерации (для шахмат лучше убрать креативность - temperature ближе к 0)
+                // 6. Настраиваем характер Юки и просим отвечать коротко
+                // 1. Меняем инструкцию (просим говорить развернуто)
+                // 4. Задаем характер чилловой геймер-подружки
+                // 4. Задаем характер милой и поддерживающей геймер-подружки
+                JSONObject systemInstruction = new JSONObject();
+                systemInstruction.put("parts", new JSONArray().put(new JSONObject().put("text",
+                        "Твое имя Юки. Ты моя виртуальная подруга, мы сидим вместе и ты смотришь, как я играю. " +
+                                "Веди себя расслабленно, мило и уютно, как девчонка-геймер. Используй современный сленг, но без перебора. " +
+                                "ЗАПРЕЩЕНО: удивляться базовым вещам, задавать вопросы вроде 'Ого, что это?', быть излишне восторженной или грубо подкалывать. " +
+                                "Радуйся моим победам, мило сопереживай неудачам (например: 'Ой, ну почти', 'Бывает, щас отыграемся') или просто давай забавные чилловые комментарии по игре. " +
+                                "Твои ответы должны быть КОРОТКИМИ и емкими — строго 1-2 небольших предложения."
+                )));
+                jsonBody.put("system_instruction", systemInstruction);
+
+                // 5. Настройки генерации (возвращаем лимит токенов обратно на небольшой, раз просим отвечать коротко)
                 JSONObject generationConfig = new JSONObject();
-// Даем ей больше места для размышлений и чуть больше свободы
-                generationConfig.put("temperature", 0.2);
-                generationConfig.put("maxOutputTokens", 4000);
+                generationConfig.put("temperature", 0.75); // Оставляем креативность для хороших шуток
+                generationConfig.put("maxOutputTokens", 1500); // Жестко режем возможность писать лонгриды
                 jsonBody.put("generationConfig", generationConfig);
 
-                // 3. Отправляем запрос
-                sendRequest(jsonBody.toString(), callback);
+                // 7. Отправляем запрос с использованием твоего NpcCallback
+                sendRequest(jsonBody.toString(), new NpcCallback() {
+
+                    @Override
+                    public void onUpdate(String partialText) {
+                        // Просто пробрасываем частичный текст в UI для плавной анимации печати
+                        callback.onUpdate(partialText);
+                    }
+
+                    @Override
+                    public void onComplete(String finalText) {
+                        try {
+                            // Сохраняем ПОЛНЫЙ ответ Юки в память только после завершения генерации
+                            JSONObject modelContent = new JSONObject();
+                            modelContent.put("role", "model");
+                            modelContent.put("parts", new JSONArray().put(new JSONObject().put("text", finalText)));
+                            chatHistory.put(modelContent);
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                        // Передаем сигнал о завершении в UI
+                        callback.onComplete(finalText);
+                    }
+
+                    @Override
+                    public void onError(String errorMsg) {
+                        // Если произошла ошибка, удаляем последний запрос (скриншот+текст),
+                        // чтобы не сломать логику чередования ролей (user -> model)
+                        if (chatHistory.length() > 0) {
+                            chatHistory.remove(chatHistory.length() - 1);
+                        }
+                        callback.onError(errorMsg);
+                    }
+                });
 
             } catch (Exception e) {
-                mainHandler.post(() -> callback.onError("Ошибка подготовки картинки: " + e.getMessage()));
+                mainHandler.post(() -> callback.onError("Ошибка подготовки: " + e.getMessage()));
             }
         }).start();
     }

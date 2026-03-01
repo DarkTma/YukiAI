@@ -268,9 +268,6 @@ public class FloatingYukiService extends Service {
 
 
 
-
-
-
     private void saveBitmapToGallery(Bitmap bitmap) {
         ContentValues values = new ContentValues();
         // Имя файла
@@ -750,4 +747,6 @@ public class FloatingYukiService extends Service {
             }, 6000);
         });
     }
+
+
 }

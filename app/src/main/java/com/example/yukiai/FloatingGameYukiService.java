@@ -29,6 +29,7 @@ import android.view.WindowManager;
 import android.view.animation.Animation;
 import android.view.animation.AnimationUtils;
 import android.widget.ImageView;
+import android.widget.RelativeLayout;
 import android.widget.TextView;
 
 import android.media.MediaPlayer;
@@ -61,9 +62,16 @@ public class FloatingGameYukiService extends Service {
     private ExecutorService executor = Executors.newSingleThreadExecutor();
     private Runnable typeWriterRunnable; // Для эффекта печатной машинки
 
+    private int textBubbleWidthPx = 0;    // Ширина облачка в пикселях
+
     // --- МОЗГИ ЮКИ ---
     private GeminiClient geminiClient;
     private GameYuki gameYuki;
+
+    private boolean isTextOnLeft = false;
+    private int headScreenX = 0; // Реальная координата головы X
+    private int headScreenY = 250; // Реальная координата головы Y
+    private int offsetPx = 0; // Размер сдвига окна
 
     // --- АВТО-СКРИНШОТЫ ---
     private Handler autoCaptureHandler = new Handler(Looper.getMainLooper());
@@ -83,6 +91,7 @@ public class FloatingGameYukiService extends Service {
     private ImageReader imageReader;
     private boolean isScreenshotRequested = false;
     private int screenWidth, screenHeight, screenDensity;
+    private boolean isDocked = false;
 
     // --- ДЛЯ ТЕКСТОВОГО ВВОДА ---
     private View inputLayout;
@@ -206,34 +215,69 @@ public class FloatingGameYukiService extends Service {
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
         windowManager.addView(floatingView, params);
 
+        DisplayMetrics metrics = new DisplayMetrics();
+        windowManager.getDefaultDisplay().getRealMetrics(metrics);
+        screenWidth = metrics.widthPixels;
+
+
         ImageView yukiHead = floatingView.findViewById(R.id.yuki_head);
+        yukiHead.setImageResource(R.drawable.yuki_chibi);
         Animation floatAnim = AnimationUtils.loadAnimation(this, R.anim.float_anim);
         yukiHead.startAnimation(floatAnim);
 
         ImageView btnClose = floatingView.findViewById(R.id.btn_close_floating);
         btnClose.setOnClickListener(v -> stopSelf());
 
+        // Вычисляем ширину текстового блока в пикселях (250dp -> px)
+        textBubbleWidthPx = (int) (250 * getResources().getDisplayMetrics().density);
+
+
+
+        // --- ВСТАВЬ ЭТО В onCreate ПЕРЕД yukiHead.setOnTouchListener ---
+        // Считаем размер облачка (250dp - 30dp нахлест) в пикселях
+        offsetPx = (int) (220 * getResources().getDisplayMetrics().density);
+        int headWidthPx = (int) (80 * getResources().getDisplayMetrics().density);
+
+        headScreenX = 0;
+        headScreenY = 250;
+        params.x = headScreenX;
+        params.y = headScreenY;
+        // -------------------------------------------------------------
+
         // 4. Логика перетаскивания и клика
         yukiHead.setOnTouchListener(new View.OnTouchListener() {
-            private int initialX, initialY;
+            private int initialHeadX, initialHeadY;
             private float initialTouchX, initialTouchY;
-            private long touchStartTime; // Время, когда коснулись экрана
+            private long touchStartTime;
 
             @Override
             public boolean onTouch(View v, MotionEvent event) {
                 switch (event.getAction()) {
                     case MotionEvent.ACTION_DOWN:
-                        initialX = params.x;
-                        initialY = params.y;
+                        initialHeadX = headScreenX; // Берем за основу координаты головы
+                        initialHeadY = headScreenY;
                         initialTouchX = event.getRawX();
                         initialTouchY = event.getRawY();
-                        touchStartTime = System.currentTimeMillis(); // Засекаем время старта
+                        touchStartTime = System.currentTimeMillis();
                         return true;
 
                     case MotionEvent.ACTION_MOVE:
-                        params.x = initialX + (int) (event.getRawX() - initialTouchX);
-                        params.y = initialY + (int) (event.getRawY() - initialTouchY);
-                        windowManager.updateViewLayout(floatingView, params);
+                        int currentDiffX = (int) (event.getRawX() - initialTouchX);
+                        int currentDiffY = (int) (event.getRawY() - initialTouchY);
+
+                        if (isDocked && (Math.abs(currentDiffX) > 20 || Math.abs(currentDiffY) > 20)) {
+                            undockYuki();
+                        }
+
+                        // Обновляем координаты именно ГОЛОВЫ
+                        headScreenX = initialHeadX + currentDiffX;
+                        headScreenY = initialHeadY + currentDiffY;
+
+                        // Проверяем, нужно ли перевернуть интерфейс
+                        updateLayoutOrientation(headScreenX > screenWidth / 2);
+
+                        // Двигаем само окно
+                        updateWindowPosition();
                         return true;
 
                     case MotionEvent.ACTION_UP:
@@ -243,16 +287,14 @@ public class FloatingGameYukiService extends Service {
 
                         if (Math.abs(diffX) < 20 && Math.abs(diffY) < 20 && touchDuration < 200) {
                             long clickTime = System.currentTimeMillis();
-
-                            // Если между кликами прошло меньше 300 мс — это ДВОЙНОЙ КЛИК
                             if (clickTime - lastClickTime < 300) {
-                                mainHandler.removeCallbacks(singleTapRunnable); // Отменяем обычный скриншот
-                                showInput(); // Открываем чат
+                                mainHandler.removeCallbacks(singleTapRunnable);
+                                undockYuki();
+                                showInput();
                             } else {
-                                // Это ОДИНАРНЫЙ КЛИК. Ждем 300 мс, вдруг будет второй
                                 singleTapRunnable = () -> {
                                     if (!gameYuki.isBusy() && !isTyping) {
-                                        takeScreenshot(""); // Обычный комментарий (без текста)
+                                        takeScreenshot("");
                                     } else if (gameYuki.isBusy()) {
                                         updateYukiMessageUI("Погоди, я еще думаю... ⏳", false);
                                     }
@@ -260,6 +302,21 @@ public class FloatingGameYukiService extends Service {
                                 mainHandler.postDelayed(singleTapRunnable, 300);
                             }
                             lastClickTime = clickTime;
+                        }
+                        else {
+                            // Логика прилипания
+                            int edgeMargin = 120;
+                            if (headScreenX < edgeMargin) {
+                                dockYuki(true);
+                                headScreenX = 0;
+                            } else if (headScreenX > screenWidth - headWidthPx - edgeMargin) {
+                                dockYuki(false);
+                                headScreenX = screenWidth - headWidthPx;
+                            } else {
+                                undockYuki();
+                            }
+                            updateLayoutOrientation(headScreenX > screenWidth / 2);
+                            updateWindowPosition();
                         }
                         return true;
                 }
@@ -285,6 +342,31 @@ public class FloatingGameYukiService extends Service {
         autoCaptureHandler.postDelayed(autoCaptureRunnable, 5000);
     }
 
+    private void dockYuki(boolean isLeft) {
+        if (!isDocked) {
+            isDocked = true;
+            ImageView yukiHead = floatingView.findViewById(R.id.yuki_head);
+
+            // Если у тебя разные картинки для левого и правого края:
+            // yukiHead.setImageResource(isLeft ? R.drawable.yuki_peeking_left : R.drawable.yuki_peeking_right);
+
+            // Если картинка одна:
+            yukiHead.setImageResource(R.drawable.yuki_chibi_peeking); // ЗАМЕНИ НА СВОЕ ИМЯ КАРТИНКИ
+
+            // Прячем текст моментально
+            yukiMessage.setVisibility(View.GONE);
+        }
+    }
+
+    private void undockYuki() {
+        if (isDocked) {
+            isDocked = false;
+            ImageView yukiHead = floatingView.findViewById(R.id.yuki_head);
+            // Возвращаем стандартную картинку
+            yukiHead.setImageResource(R.drawable.yuki_chibi);
+        }
+    }
+
     private void takeScreenshot(String prompt) {
         if (mediaProjection == null) return;
 
@@ -302,32 +384,26 @@ public class FloatingGameYukiService extends Service {
 
     private void showInput() {
         isTyping = true;
-
-        // ОСТАНАВЛИВАЕМ авто-таймер, чтобы Юки не фоткала, пока мы пишем
-        if (autoCaptureHandler != null && autoCaptureRunnable != null) {
-            autoCaptureHandler.removeCallbacks(autoCaptureRunnable);
-        }
+        if (autoCaptureHandler != null && autoCaptureRunnable != null) autoCaptureHandler.removeCallbacks(autoCaptureRunnable);
 
         inputLayout.setVisibility(View.VISIBLE);
+        updateWindowPosition(); // <--- ЭТО ВАЖНО
 
-        // МАГИЯ: Убираем флаг FLAG_NOT_FOCUSABLE, чтобы Android разрешил открыть клавиатуру
         WindowManager.LayoutParams currentParams = (WindowManager.LayoutParams) floatingView.getLayoutParams();
         currentParams.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
         windowManager.updateViewLayout(floatingView, currentParams);
-
         yukiInput.requestFocus();
     }
 
     private void hideInput() {
         isTyping = false;
         inputLayout.setVisibility(View.GONE);
+        updateWindowPosition(); // <--- ЭТО ВАЖНО
 
-        // МАГИЯ: Возвращаем флаг FLAG_NOT_FOCUSABLE, чтобы окно не мешало играть
         WindowManager.LayoutParams currentParams = (WindowManager.LayoutParams) floatingView.getLayoutParams();
         currentParams.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
         windowManager.updateViewLayout(floatingView, currentParams);
 
-        // ВОЗОБНОВЛЯЕМ авто-таймер с нуля
         if (autoCaptureHandler != null && autoCaptureRunnable != null) {
             autoCaptureHandler.removeCallbacks(autoCaptureRunnable);
             autoCaptureHandler.postDelayed(autoCaptureRunnable, AUTO_CAPTURE_INTERVAL);
@@ -397,43 +473,45 @@ public class FloatingGameYukiService extends Service {
             mediaPlayer.setDataSource(audioPath);
             mediaPlayer.prepare();
 
+            // --- ВЕРНУЛИ ЭТИ ДВЕ СТРОЧКИ ---
+            // Вычисляем скорость печати (Длительность аудио / Количество символов)
+            long durationMs = mediaPlayer.getDuration();
+            long delayPerChar = durationMs / Math.max(fullText.length(), 1);
+            // --------------------------------
+
             // Сбрасываем старые таймеры
             if (hideTextRunnable != null) mainHandler.removeCallbacks(hideTextRunnable);
             if (typeWriterRunnable != null) mainHandler.removeCallbacks(typeWriterRunnable);
 
-            // Показываем пустое облачко
-            yukiMessage.setText("");
-            if (yukiMessage.getVisibility() != View.VISIBLE) {
-                yukiMessage.setAlpha(0f);
-                yukiMessage.setVisibility(View.VISIBLE);
-                yukiMessage.animate().alpha(1f).setDuration(200).start();
-            }
-
-            // Вычисляем скорость печати (Длительность аудио / Количество символов)
-            long durationMs = mediaPlayer.getDuration();
-            long delayPerChar = durationMs / Math.max(fullText.length(), 1);
-
             mediaPlayer.start(); // ЗАПУСКАЕМ ГОЛОС
 
-            // ЗАПУСКАЕМ ПЕЧАТЬ ТЕКСТА
-            typeWriterRunnable = new Runnable() {
-                int index = 0;
-                @Override
-                public void run() {
-                    if (index <= fullText.length()) {
-                        yukiMessage.setText(fullText.substring(0, index));
-                        index++;
-                        // Запускаем следующую букву
-                        mainHandler.postDelayed(this, delayPerChar);
-                    } else {
-                        // Текст дописан (и аудио как раз закончилось).
-                        // Запускаем таймер на скрытие облачка через 8 секунд.
-                        hideTextRunnable = () -> yukiMessage.animate().alpha(0f).setDuration(300).withEndAction(() -> yukiMessage.setVisibility(View.GONE)).start();
-                        mainHandler.postDelayed(hideTextRunnable, 8000);
-                    }
+            // --- ПРОВЕРКА НА ПРИЛИПАНИЕ К КРАЮ ---
+            if (!isDocked) {
+                // Показываем пустое облачко только если Юки не прилипла к краю
+                yukiMessage.setText("");
+                if (yukiMessage.getVisibility() != View.VISIBLE) {
+                    yukiMessage.setAlpha(0f);
+                    yukiMessage.setVisibility(View.VISIBLE);
+                    yukiMessage.animate().alpha(1f).setDuration(200).start();
                 }
-            };
-            mainHandler.post(typeWriterRunnable);
+
+                // ЗАПУСКАЕМ ПЕЧАТЬ ТЕКСТА
+                typeWriterRunnable = new Runnable() {
+                    int index = 0;
+                    @Override
+                    public void run() {
+                        if (index <= fullText.length()) {
+                            yukiMessage.setText(fullText.substring(0, index));
+                            index++;
+                            mainHandler.postDelayed(this, delayPerChar);
+                        } else {
+                            hideTextRunnable = () -> yukiMessage.animate().alpha(0f).setDuration(300).withEndAction(() -> yukiMessage.setVisibility(View.GONE)).start();
+                            mainHandler.postDelayed(hideTextRunnable, 8000);
+                        }
+                    }
+                };
+                mainHandler.post(typeWriterRunnable);
+            }
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -493,6 +571,9 @@ public class FloatingGameYukiService extends Service {
     }
 
     private void updateYukiMessageUI(String text, boolean isStreaming) {
+
+        if (isDocked) return;
+
         mainHandler.post(() -> {
             if (hideTextRunnable != null) {
                 mainHandler.removeCallbacks(hideTextRunnable);
@@ -515,6 +596,91 @@ public class FloatingGameYukiService extends Service {
                 mainHandler.postDelayed(hideTextRunnable, 8000);
             }
         });
+    }
+
+    private void updateLayoutOrientation(boolean textOnLeft) {
+        if (isTextOnLeft == textOnLeft) return; // Ничего не делаем, если сторона не поменялась
+        isTextOnLeft = textOnLeft;
+
+        // Находим картинку Юки (чтобы менять её правила тоже)
+        ImageView yukiHead = floatingView.findViewById(R.id.yuki_head);
+
+        RelativeLayout.LayoutParams headParams = (RelativeLayout.LayoutParams) yukiHead.getLayoutParams();
+        RelativeLayout.LayoutParams messageParams = (RelativeLayout.LayoutParams) yukiMessage.getLayoutParams();
+        RelativeLayout.LayoutParams inputParams = (RelativeLayout.LayoutParams) inputLayout.getLayoutParams();
+
+        // 1. Очищаем абсолютно ВСЕ старые правила позиционирования
+        headParams.removeRule(RelativeLayout.ALIGN_PARENT_LEFT);
+        headParams.removeRule(RelativeLayout.ALIGN_PARENT_RIGHT);
+
+        messageParams.removeRule(RelativeLayout.LEFT_OF);
+        messageParams.removeRule(RelativeLayout.RIGHT_OF);
+
+        inputParams.removeRule(RelativeLayout.LEFT_OF);
+        inputParams.removeRule(RelativeLayout.RIGHT_OF);
+        inputParams.removeRule(RelativeLayout.ALIGN_LEFT);
+        inputParams.removeRule(RelativeLayout.ALIGN_RIGHT);
+
+        // Переводим dp в пиксели для красивых отступов (чтобы текст не лез под голову)
+        float density = getResources().getDisplayMetrics().density;
+        int padLarge = (int) (45 * density); // Большой отступ (пустое место под голову Юки)
+        int padNormal = (int) (12 * density); // Обычный отступ для краев
+
+        if (textOnLeft) {
+            // ЮКИ СПРАВА, ТЕКСТ СЛЕВА
+            // Жестко прибиваем Юки к правому краю контейнера (чтобы текст не обрезался)
+            headParams.addRule(RelativeLayout.ALIGN_PARENT_RIGHT, RelativeLayout.TRUE);
+
+            messageParams.addRule(RelativeLayout.LEFT_OF, R.id.yuki_head);
+            inputParams.addRule(RelativeLayout.LEFT_OF, R.id.yuki_head);
+
+            messageParams.setMargins(0, 0, -30, 10);
+
+            // МАГИЯ ОТСТУПОВ: Делаем правый край текста пустым, чтобы голова Юки его не закрывала
+            yukiMessage.setPadding(padNormal, padNormal, padLarge, padNormal);
+            inputLayout.setPadding(padNormal, padNormal, padLarge, padNormal);
+        } else {
+            // ЮКИ СЛЕВА, ТЕКСТ СПРАВА
+            // Прибиваем Юки к левому краю контейнера
+            headParams.addRule(RelativeLayout.ALIGN_PARENT_LEFT, RelativeLayout.TRUE);
+
+            messageParams.addRule(RelativeLayout.RIGHT_OF, R.id.yuki_head);
+            inputParams.addRule(RelativeLayout.RIGHT_OF, R.id.yuki_head);
+
+            messageParams.setMargins(-30, 0, 0, 10);
+
+            // МАГИЯ ОТСТУПОВ: Делаем левый край текста пустым
+            yukiMessage.setPadding(padLarge, padNormal, padNormal, padNormal);
+            inputLayout.setPadding(padLarge, padNormal, padNormal, padNormal);
+        }
+
+        // Применяем новые параметры
+        yukiHead.setLayoutParams(headParams);
+        yukiMessage.setLayoutParams(messageParams);
+        inputLayout.setLayoutParams(inputParams);
+
+        // Заставляем Android перерисовать окно с новыми размерами
+        floatingView.requestLayout();
+        updateWindowPosition();
+    }
+
+    private void updateWindowPosition() {
+        if (floatingView == null || windowManager == null) return;
+        WindowManager.LayoutParams params = (WindowManager.LayoutParams) floatingView.getLayoutParams();
+
+        // Проверяем, видимо ли сейчас хоть что-то из текста
+        boolean isTextVisible = yukiMessage.getVisibility() == View.VISIBLE || inputLayout.getVisibility() == View.VISIBLE;
+
+        // Если текст СЛЕВА и он ВИДИМ, нам нужно сдвинуть левую границу окна левее,
+        // чтобы освободить место для облачка, не сдвигая саму Юки.
+        if (isTextOnLeft && isTextVisible) {
+            params.x = headScreenX - offsetPx;
+        } else {
+            params.x = headScreenX; // Если текст справа или скрыт, окно начинается от Юки
+        }
+        params.y = headScreenY;
+
+        windowManager.updateViewLayout(floatingView, params);
     }
 
     @Override

@@ -9,10 +9,12 @@
 
     <TextView
         android:id="@+id/yuki_message"
-        android:layout_width="250dp" android:layout_height="wrap_content"
-        android:maxHeight="120dp" android:scrollbars="vertical" android:fadeScrollbars="false" android:layout_marginEnd="-10dp"
+        android:layout_width="250dp"
+        android:layout_height="wrap_content"
+        android:maxHeight="120dp"
+        android:scrollbars="vertical"
+        android:fadeScrollbars="false"
         android:layout_marginBottom="10dp"
-        android:layout_toStartOf="@+id/yuki_head"
         android:layout_alignBottom="@+id/yuki_head"
         android:background="@drawable/bg_dialogue_style"
         android:elevation="6dp"
@@ -27,7 +29,6 @@
         android:id="@+id/yuki_head"
         android:layout_width="80dp"
         android:layout_height="80dp"
-        android:layout_alignParentEnd="true"
         android:elevation="8dp"
         android:src="@drawable/shiro_chibi" />
 
@@ -49,7 +50,6 @@
         android:layout_width="250dp"
         android:layout_height="wrap_content"
         android:layout_below="@+id/yuki_head"
-        android:layout_alignEnd="@+id/yuki_head"
         android:layout_marginTop="5dp"
         android:background="@drawable/bg_dialogue_style"
         android:orientation="horizontal"
@@ -74,6 +74,7 @@
             android:layout_width="32dp"
             android:layout_height="32dp"
             android:padding="4dp"
-            android:src="@android:drawable/ic_menu_send" /> </LinearLayout>
+            android:src="@android:drawable/ic_menu_send" />
+    </LinearLayout>
 
 </RelativeLayout>

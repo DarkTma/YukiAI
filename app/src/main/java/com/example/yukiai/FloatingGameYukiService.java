@@ -290,7 +290,7 @@ public class FloatingGameYukiService extends Service {
                             }
                             lastClickTime = clickTime;
                         }
-                        // --- ПРИЛИПАНИЕ ---
+                        // --- ПРИЛИПАНИЕ К КРАЯМ ---
                         else {
                             float finalFingerX = event.getRawX();
                             int edgeMargin = 120;
@@ -298,14 +298,14 @@ public class FloatingGameYukiService extends Service {
 
                             if (finalFingerX < edgeMargin) {
                                 dockYuki(true);
-                                headAnchorX = 0;
+                                headAnchorX = 0; // Идеально ровно к левому краю
                             } else if (finalFingerX > screenWidth - edgeMargin) {
                                 dockYuki(false);
-                                headAnchorX = screenWidth - headWidth;
+                                headAnchorX = screenWidth - headWidth; // Идеально ровно к правому краю
                             } else {
                                 undockYuki();
                             }
-                            refreshWindowPosition(); // Окончательная отрисовка
+                            refreshWindowPosition();
                         }
                         return true;
                 }
@@ -335,14 +335,17 @@ public class FloatingGameYukiService extends Service {
         if (!isDocked) {
             isDocked = true;
             ImageView yukiHead = floatingView.findViewById(R.id.yuki_head);
-            yukiHead.setImageResource(R.drawable.yuki_chibi_peeking); // Твоя картинка
+            yukiHead.setImageResource(R.drawable.yuki_chibi_peeking);
 
-            // --- МАГИЯ ПОВОРОТА ---
-            // Если Юки слева, макушка должна смотреть в стену (или наоборот, зависит от исходника картинки).
-            // Попробуй 90f и -90f. Если она повернется шеей в центр экрана, просто поменяй их местами!
+            // --- МАГИЯ ЦЕНТРОВКИ ---
+            // Жестко задаем точку вращения ровно по центру (40dp - это половина от твоих 80dp)
+//            float centerPx = 40 * getResources().getDisplayMetrics().density;
+//            yukiHead.setPivotX(centerPx);
+//            yukiHead.setPivotY(centerPx);
+
+            // Теперь она повернется идеально вокруг своей оси и никуда не съедет!
             yukiHead.setRotation(isLeft ? 90f : -90f);
 
-            // Прячем текст моментально
             yukiMessage.setVisibility(View.GONE);
         }
     }
@@ -351,14 +354,12 @@ public class FloatingGameYukiService extends Service {
         if (isDocked) {
             isDocked = false;
             ImageView yukiHead = floatingView.findViewById(R.id.yuki_head);
-            // Возвращаем стандартную картинку
             yukiHead.setImageResource(R.drawable.yuki_chibi);
 
-            // --- СБРАСЫВАЕМ ПОВОРОТ ---
+            // ОБЯЗАТЕЛЬНО возвращаем голову на место, когда она в центре экрана!
             yukiHead.setRotation(0f);
         }
     }
-
     private void takeScreenshot(String prompt) {
         if (mediaProjection == null) return;
 
@@ -676,38 +677,55 @@ public class FloatingGameYukiService extends Service {
         // 1. Решаем, с какой стороны рисовать текст
         boolean shouldBeLeft = headAnchorX > (screenWidth / 2);
 
-        // 2. Переворачиваем макет (передаем видимость!)
+        // 2. Переворачиваем макет
         updateLayoutOrientation(shouldBeLeft, isTextVisible);
 
-        // 3. Вычисляем точную позицию X
+        // 3. Вычисляем точную позицию X (с нахлестом)
         int targetX = headAnchorX;
         float density = getResources().getDisplayMetrics().density;
         int overlapPx = (int) (30 * density);
 
         if (isTextVisible && shouldBeLeft) {
-            // Если текст слева, сдвигаем окно левее, чтобы голова осталась на месте
             targetX = headAnchorX - (textBubbleWidthPx - overlapPx);
         }
 
-        // 4. УМНЫЙ АВТО-СДВИГ (ЗАЩИТА ОТ ВЫХОДА ЗА ЭКРАН)
+        // --- МАГИЯ ГОРИЗОНТАЛЬНОГО ОТСТУПА ---
+        int shiftLeftPx = 0;  // На сколько толкаем влево, если Юки СЛЕВА
+        int shiftRightPx = 0; // На сколько толкаем влево, если Юки СПРАВА
+
+        if (screenWidth > screenHeight) {
+            shiftRightPx = (int) (35 * density); // Сдвиг для правой стороны
+            shiftLeftPx = (int) (20 * density);  // Сдвиг для левой стороны (настрой, чтобы утопить её глубже)
+
+            if (shouldBeLeft) {
+                // Юки СПРАВА. Толкаем ВЛЕВО от правого края.
+                targetX -= shiftRightPx;
+            } else {
+                // Юки СЛЕВА. Толкаем ТОЖЕ ВЛЕВО (в отрицательные координаты, за экран).
+                targetX -= shiftLeftPx;
+            }
+        }
+        // ------------------------------------
+
+        // 4. УМНЫЙ АВТО-СДВИГ (ЗАЩИТА ОТ КРАЕВ ЭКРАНА)
         ImageView yukiHead = floatingView.findViewById(R.id.yuki_head);
         int headWidthPx = yukiHead.getWidth() > 0 ? yukiHead.getWidth() : (int) (80 * density);
 
-        // Считаем реальную ширину окна с учетом нахлеста
         int currentTotalWidth = isTextVisible ? (textBubbleWidthPx + headWidthPx - overlapPx) : headWidthPx;
         int margin = 20;
 
         if (!isDocked) {
-            // Если Юки в свободном полете — держим её в 20 пикселях от края
             if (targetX < margin) {
                 targetX = margin;
             } else if (targetX + currentTotalWidth > screenWidth - margin) {
                 targetX = screenWidth - currentTotalWidth - margin;
             }
         } else {
-            // Если Юки прилеплена к стене (docked) — разрешаем стоять вплотную (0 пикселей)
-            if (targetX < 0) {
-                targetX = 0;
+            // МАГИЯ: Разрешаем окну уходить в МИНУС на левой стороне, чтобы сдвиг сработал!
+            int minTargetX = shouldBeLeft ? 0 : -shiftLeftPx;
+
+            if (targetX < minTargetX) {
+                targetX = minTargetX;
             } else if (targetX + currentTotalWidth > screenWidth) {
                 targetX = screenWidth - currentTotalWidth;
             }

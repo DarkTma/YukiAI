@@ -777,6 +777,7 @@ public class HomeActivity extends AppCompatActivity {
         isSpeaking = true;
         idleHandler.removeCallbacks(idleRunnable); // Останавливаем таймер ожидания
         String coquiUrl = "http://91.205.196.207:5002/api/tts";
+//        String coquiUrl = "https://harris-subtorrid-chelsey.ngrok-free.dev";
 
         executor.execute(() -> {
             try {

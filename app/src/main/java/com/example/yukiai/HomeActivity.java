@@ -43,6 +43,11 @@ import androidx.core.content.ContextCompat;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
+import java.io.File;
+import java.nio.file.Files;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -86,6 +91,8 @@ public class HomeActivity extends AppCompatActivity {
     private TextView textDialogue; // Оставляем ОДНУ переменную для текста
     private TextView speakerName;
     private ImageView scrollImage; // Добавил, так как использовалось в коде, но не было объявлено
+
+    private YukiTtsServer ttsServer;
 
     // --- Логика ---
     private GestureDetector gestureDetector;
@@ -134,6 +141,7 @@ public class HomeActivity extends AppCompatActivity {
     private Runnable idleRunnable;
     private final long IDLE_DELAY = 20000; // 20 секунд
 
+    private TextToSpeech tts;
 
     private MediaProjectionManager projectionManager;
     private static final int REQUEST_MEDIA_PROJECTION = 1005;
@@ -230,10 +238,8 @@ public class HomeActivity extends AppCompatActivity {
         speakerName = findViewById(R.id.speakerName);
         textDialogue = findViewById(R.id.textDialogue);
 
-
         projectionManager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
 
-        // --- ДОБАВИТЬ ВОТ ЭТОТ БЛОК ---
         // Жестко фиксируем размер VideoView по реальным пикселям экрана
         android.util.DisplayMetrics metrics = new android.util.DisplayMetrics();
         getWindowManager().getDefaultDisplay().getRealMetrics(metrics);
@@ -243,15 +249,30 @@ public class HomeActivity extends AppCompatActivity {
         params.height = metrics.heightPixels;
         bgVideoView.setLayoutParams(params);
 
-        // (Опционально) То же самое для bgImageView, чтобы картинка тоже не прыгала
         android.view.ViewGroup.LayoutParams imgParams = bgImageView.getLayoutParams();
         imgParams.width = metrics.widthPixels;
         imgParams.height = metrics.heightPixels;
         bgImageView.setLayoutParams(imgParams);
-        // -------------------------------
 
         // 2. Инициализация AI и кнопок
         npcAI = new GeminiClient(BuildConfig.GEMINI_API_KEY);
+
+        // === ДОБАВЛЯЕМ ИНИЦИАЛИЗАЦИЮ TTS ТУТ ===
+        tts = new TextToSpeech(this, status -> {
+            if (status == TextToSpeech.SUCCESS) {
+                // Устанавливаем русский язык для озвучки по умолчанию
+                int result = tts.setLanguage(new java.util.Locale("ru"));
+                if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    Log.e("YukiDebug", "Русский язык не поддерживается встроенным TTS");
+                } else {
+                    Log.d("YukiDebug", "Встроенный TTS успешно запущен!");
+                }
+            } else {
+                Log.e("YukiDebug", "Ошибка инициализации встроенного TTS");
+            }
+        });
+        // ======================================
+
         findViewById(R.id.btnSettings).setOnClickListener(v -> openSettingsDialog());
         findViewById(R.id.btnPlayVoice).setOnClickListener(v -> replayLastAudio());
         findViewById(R.id.btnTranslateUI).setOnClickListener(v -> showTranslationMenu());
@@ -284,11 +305,20 @@ public class HomeActivity extends AppCompatActivity {
         });
 
         // 4. Запуск таймера
-        // Теперь нам не нужно ждать "готовности" поверхности.
-        // VideoView сам разберется, когда начать играть после вызова playBackgroundVideo.
         idleRunnable = this::startIdleAnimation;
         switchToDefaultAnimation();
         resetIdleTimer();
+
+        // Запуск локального сервера для связи с ПК
+        try {
+            // === ИЗМЕНЯЕМ СТРОКУ ТУТ (передаем tts третьим аргументом) ===
+            ttsServer = new YukiTtsServer(8080, this, tts);
+            // ============================================================
+            ttsServer.start();
+            Log.d("YukiDebug", "Локальный WebSocket сервер стартовал.");
+        } catch (Exception e) {
+            Log.e("YukiDebug", "Не удалось запустить сервер: " + e.getMessage());
+        }
     }
 
 
@@ -1113,6 +1143,20 @@ public class HomeActivity extends AppCompatActivity {
         if (speechRecognizer != null) {
             speechRecognizer.destroy();
             speechRecognizer = null;
+        }
+    }
+
+
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        if (ttsServer != null) {
+            try {
+                ttsServer.stop();
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
         }
     }
 

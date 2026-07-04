@@ -28,12 +28,12 @@ public class MainActivity extends AppCompatActivity {
             startNextActivity();
         });
 
-        Intent intent = new Intent(this, YukiOrchestratorService.class);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent);
-        } else {
-            startService(intent);
-        }
+//        Intent intent = new Intent(this, YukiOrchestratorService.class);
+//        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+//            startForegroundService(intent);
+//        } else {
+//            startService(intent);
+//        }
 
         // Запускаем видео
         videoView.start();

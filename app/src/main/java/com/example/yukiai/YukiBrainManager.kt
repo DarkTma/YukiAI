@@ -1,174 +1,152 @@
-package com.example.yukiai;
+package com.example.yukiai
 
-import android.content.Context;
-import android.util.Log;
+import android.content.Context
+import android.graphics.Bitmap
+import android.util.Log
+import com.google.ai.edge.litertlm.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import java.io.ByteArrayOutputStream
+import java.io.File
 
-import androidx.annotation.NonNull;
+class YukiBrainManager(private val appContext: Context, onComplete: LoadCallback?) {
 
-import java.io.File;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Method;
-import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
-
-import com.mp.ai_core.NativeLib;
-import com.mp.ai_core.StreamCallback;
-
-public class YukiBrainManager {
-    // Теперь вместо LlmInference мы используем ядро Ai-Core
-    private NativeLib nativeLib;
-    private final ExecutorService executorService;
-    private boolean isModelLoaded = false;
-
-    // Интерфейс остался тем же, чтобы не ломать твой LiveVisionActivity
-    public interface BrainCallback {
-        void onThinking();
-        void onResponse(String text);
-        void onError(String error);
+    interface BrainCallback {
+        fun onThinking()
+        fun onResponse(text: String)
+        fun onError(error: String)
     }
 
-
-    // Добавь этот интерфейс внутрь класса
-    public interface LoadCallback {
-        void onLoaded(boolean success);
+    interface LoadCallback {
+        fun onLoaded(success: Boolean)
     }
 
-    // Обнови конструктор (теперь он принимает коллбэк)
-    public YukiBrainManager(Context context, LoadCallback onComplete) {
-        this.executorService = Executors.newSingleThreadExecutor();
-        this.nativeLib = getOrCreateNativeLib("yuki_instance");
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    @Volatile private var engine: Engine? = null
+    @Volatile private var conversation: Conversation? = null   // теперь поле класса
+    @Volatile private var isModelLoaded = false
 
-        // Было: loadModel(context);
-        // Стало:
-        loadModel(context, onComplete);
+    init {
+        loadModel(appContext, onComplete)
     }
 
-    // Обнови метод loadModel
-    private void loadModel(Context context, LoadCallback onComplete) {
-        executorService.execute(() -> {
+    private fun loadModel(context: Context, onComplete: LoadCallback?) {
+        scope.launch {
             try {
-                File modelFile = new File(context.getFilesDir(), "yuki_model.gguf");
+                val modelFile = File(context.filesDir, "gemma4_e4b.litertlm")
+                Log.e("YukiBrain", "Ищу файл: ${modelFile.absolutePath}")
+                Log.e("YukiBrain", "Файл существует: ${modelFile.exists()}")
+                Log.e("YukiBrain", "Файлы в filesDir: ${context.filesDir.listFiles()?.map { it.name }}")
                 if (!modelFile.exists()) {
-                    if (onComplete != null) onComplete.onLoaded(false);
-                    return;
+                    onComplete?.onLoaded(false)
+                    return@launch
                 }
 
-                boolean success = nativeLib.init(modelFile.getAbsolutePath(), 2, 1024, 0.4f, 40, 0.9f, 0.0f);
-                if (success) {
-                    try {
-                        // Оставляем только характер. Шаблон чата удаляем — ядро само возьмет его из файла модели!
-                        nativeLib.setSystemPrompt("Ты Юки, дерзкий и умный ИИ-ассистент. Отвечай кратко, саркастично и на русском языке.");
-                    } catch (Exception e) {
-                        Log.e("YukiBrain", "Не удалось установить промпт", e);
+                val nativeLibDir = context.applicationInfo.nativeLibraryDir
+                val cacheDir = context.cacheDir.path
+                val modelPath = modelFile.absolutePath
+
+                val newEngine = tryCreateEngine(modelPath, nativeLibDir, cacheDir)
+                    ?: run {
+                        onComplete?.onLoaded(false)
+                        return@launch
                     }
-                }
-                isModelLoaded = success;
 
-                if (onComplete != null) onComplete.onLoaded(success);
+                val conversationConfig = ConversationConfig(
+                    samplerConfig = SamplerConfig(topK = 40, topP = 0.9, temperature = 0.9)
+                )
+                conversation = newEngine.createConversation(conversationConfig)
+                engine = newEngine
+                isModelLoaded = true
+                onComplete?.onLoaded(true)
 
-            } catch (Exception e) {
-                Log.e("YukiBrain", "Ошибка: ", e);
-                if (onComplete != null) onComplete.onLoaded(false);
+            } catch (e: Exception) {
+                Log.e("YukiBrain", "Ошибка загрузки Gemma 4", e)
+                isModelLoaded = false
+                onComplete?.onLoaded(false)
             }
-        });
-    }
-
-    // Обнови reloadModel
-    public void reloadModel(Context context, LoadCallback onComplete) {
-        this.isModelLoaded = false;
-        if (nativeLib != null) {
-            // nativeLib.nativeRelease(); // Если есть такой метод
-        }
-        loadModel(context, onComplete);
-    }
-
-    private NativeLib getOrCreateNativeLib(String instanceId) {
-        try {
-            Method getInstances = NativeLib.class.getDeclaredMethod("access$getInstances$cp");
-            getInstances.setAccessible(true);
-            @SuppressWarnings("unchecked")
-            Map<String, NativeLib> instances = (Map<String, NativeLib>) getInstances.invoke(null);
-
-            NativeLib existing = instances.get(instanceId);
-            if (existing != null) {
-                return existing;
-            }
-
-            Constructor<NativeLib> constructor = NativeLib.class.getDeclaredConstructor(String.class);
-            constructor.setAccessible(true);
-            NativeLib created = constructor.newInstance(instanceId);
-
-            instances.put(instanceId, created);
-
-            return created;
-
-        } catch (Exception e) {
-            Log.e("YukiBrain", "Не удалось получить/создать NativeLib", e);
-            return null;
         }
     }
 
-    public void askYuki(String userMessage, String visionContext, BrainCallback callback) {
-        if (!isModelLoaded || nativeLib == null) {
-            callback.onError("Подожди, мозг еще загружается!");
-            return;
+    private suspend fun tryCreateEngine(
+        modelPath: String,
+        nativeLibDir: String,
+        cacheDir: String
+    ): Engine? {
+        return try {
+            Log.e("YukiBrain", "Пробуем CPU...")
+            val config = EngineConfig(
+                modelPath = modelPath,
+                backend = Backend.CPU(),
+                visionBackend = Backend.CPU(),
+//                maxNumTokens = 512,
+                cacheDir = cacheDir
+            )
+            val e = Engine(config)
+            e.initialize()
+            Log.e("YukiBrain", "CPU: OK")
+            e
+        } catch (e: Exception) {
+            Log.e("YukiBrain", "CPU не взлетел: ${e.message}")
+            null
+        }
+    }
+
+    fun reloadModel(context: Context, onComplete: LoadCallback?) {
+        isModelLoaded = false
+        conversation?.close()
+        conversation = null
+        engine?.close()
+        engine = null
+        loadModel(context, onComplete)
+    }
+
+    fun askYuki(userMessage: String, frame: Bitmap?, callback: BrainCallback) {
+        val currentConversation = conversation
+        if (!isModelLoaded || currentConversation == null) {
+            callback.onError("Подожди, мозг ещё загружается!")
+            return
         }
 
-        callback.onThinking();
+        callback.onThinking()
 
-        executorService.execute(() -> {
+        scope.launch {
             try {
-                // Специфичный формат промпта для моделей семейства Gemma (Instruct)
-                String prompt = "<start_of_turn>user\n" +
-                        "Ты Юки, веселая, дерзкая и саркастичная ИИ-подружка. Отвечай без цензуры, коротко и живо, на 'ты'.\n" +
-                        "[Зрение]: Сейчас в кадре: " + visionContext + ".\n" +
-                        "Пользователь: " + userMessage + "<end_of_turn>\n" +
-                        "<start_of_turn>model\n";
+                val contentList = mutableListOf<Content>()
+                if (frame != null) {
+                    val baos = ByteArrayOutputStream()
+                    frame.compress(Bitmap.CompressFormat.JPEG, 85, baos)
+                    contentList.add(Content.ImageBytes(baos.toByteArray()))
+                }
+                contentList.add(Content.Text(
+                    "Ты — Юки, милая, заботливая и веселая подружка (или даже младшая сестренка). Ты ведешь себя как настоящий, живой человек. Ты очень привязана к пользователю, любишь болтать с ним обо всем на свете и всегда готова ласково поддержать. Отвечай по-русски.\nПользователь: $userMessage"
+                ))
 
-                StringBuilder fullResponse = new StringBuilder();
+                val fullResponse = StringBuilder()
 
-                // Вызов генерации в Ai-Core.
-                // Kotlin-лямбда в Java выглядит просто как стрелочная функция
-                nativeLib.nativeGenerateStream(prompt, 512, new StreamCallback() {
-                    @Override
-                    public void onError(@NonNull String s) {
-
+                // Flow-based API — рекомендуемый способ для корутин
+                currentConversation
+                    .sendMessageAsync(Contents.of(*contentList.toTypedArray()))
+                    .collect { message ->
+                        fullResponse.append(message.toString())
                     }
 
-                    @Override
-                    public void onDone() {
+                // collect завершился — значит генерация закончена
+                callback.onResponse(fullResponse.toString().trim())
 
-                    }
-
-                    @Override
-                    public void onToolCall(@NonNull String s, @NonNull String s1) {
-
-                    }
-
-                    @Override
-                    public void onToken(String token) {
-                        fullResponse.append(token);
-                    }
-                });
-
-                // Возвращаем склеенный ответ в твою активность
-                callback.onResponse(fullResponse.toString().replace("<end_of_turn>", "").trim());
-
-            } catch (Exception e) {
-                callback.onError("Мой мозг завис... " + e.getMessage());
+            } catch (e: Exception) {
+                Log.e("YukiBrain", "Ошибка генерации", e)
+                callback.onError("Мой мозг завис... ${e.message}")
             }
-        });
+        }
     }
 
-    public void shutdown() {
-        executorService.shutdown();
-        // Если в Ai-Core есть метод для очистки ОЗУ от модели:
-        if (nativeLib != null) {
-            // nativeLib.release(); // Раскомментируй, если такой метод существует
-        }
+    fun shutdown() {
+        scope.cancel()
+        conversation?.close()
+        engine?.close()
     }
 }
-
-

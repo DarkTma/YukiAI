@@ -1,10 +1,20 @@
 package com.example.yukiai;
 
 import android.Manifest;
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
+import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.IBinder;
+import android.os.Looper;
+import android.os.Message;
+import android.os.Messenger;
+import android.os.RemoteException;
 import android.util.Log;
 import android.widget.Button;
 import android.widget.EditText;
@@ -32,6 +42,7 @@ import android.view.View;
 import android.widget.ProgressBar;
 import android.widget.LinearLayout;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
@@ -58,16 +69,68 @@ public class LiveVisionActivity extends AppCompatActivity {
     private Button btnSend;
     private Button btnImportModel; // Добавили кнопку
 
+    private Messenger brainService;
+    private boolean brainBound = false;
+    private boolean modelReady = false;
+
     private YukiLocalVision yukiLocalVision;
-    private YukiBrainManager yukiBrain;
 
     private long lastSpeechEndTime = 0;
-    private boolean isYukiSpeaking = false;
+//    private boolean isYukiSpeaking = false;
     private List<String> previousObjects = new ArrayList<>();
 
     private LinearLayout loadingOverlay;
     private ProgressBar progressBar;
     private TextView loadingText;
+
+    private volatile boolean isYukiSpeaking = false;
+
+    private final Messenger clientMessenger = new Messenger(new Handler(Looper.getMainLooper()) {
+        @Override
+        public void handleMessage(Message msg) {
+            String text = msg.getData().getString("text");
+            switch (msg.what) {
+                case YukiBrainService.MSG_THINKING:
+                    yukiSpeechText.setTextColor(android.graphics.Color.parseColor("#B388FF"));
+                    yukiSpeechText.setText("Юки: Думаю...");
+                    break;
+                case YukiBrainService.MSG_RESPONSE:
+                    finishSpeaking(text);
+                    break;
+                case YukiBrainService.MSG_ERROR:
+                    finishSpeaking("[Системная ошибка]: " + text);
+                    break;
+                case YukiBrainService.MSG_MODEL_LOADED:
+                    modelReady = "1".equals(text);
+                    hideLoading();
+                    Toast.makeText(LiveVisionActivity.this,
+                            modelReady ? "Мозг Юки готов!" : "Ошибка загрузки модели",
+                            Toast.LENGTH_SHORT).show();
+                    break;
+            }
+        }
+    });
+
+    private final ServiceConnection brainConnection = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder binder) {
+            brainService = new Messenger(binder);
+            brainBound = true;
+            try {
+                Message msg = Message.obtain(null, YukiBrainService.MSG_REGISTER_CLIENT);
+                msg.replyTo = clientMessenger;
+                brainService.send(msg);
+            } catch (RemoteException e) {
+                Log.e("LiveVision", "Регистрация в сервисе не удалась", e);
+            }
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName name) {
+            brainService = null;
+            brainBound = false;
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -79,62 +142,54 @@ public class LiveVisionActivity extends AppCompatActivity {
         userInputText = findViewById(R.id.userInputText);
         modelSwitch = findViewById(R.id.modelSwitch);
         btnSend = findViewById(R.id.btnSend);
-        btnImportModel = findViewById(R.id.btnImportModel); // Инициализировали кнопку
+        btnImportModel = findViewById(R.id.btnImportModel);
+
+        loadingOverlay = findViewById(R.id.loadingOverlay);
+        progressBar = findViewById(R.id.progressBar);
+        loadingText = findViewById(R.id.loadingText);
 
         yukiLocalVision = new YukiLocalVision(this);
-// Инициализация мозга с коллбэком для управления экраном загрузки
-        yukiBrain = new YukiBrainManager(this, success -> {
-            runOnUiThread(() -> {
-                hideLoading();
-                if (success) {
-                    Toast.makeText(this, "Мозг Юки успешно загружен!", Toast.LENGTH_SHORT).show();
-                } else {
-                    Toast.makeText(this, "Ошибка: не удалось загрузить модель.", Toast.LENGTH_LONG).show();
-                }
-            });
-        });
 
-        // Вешаем слушатель на кнопку импорта
         btnImportModel.setOnClickListener(v -> openFilePicker());
 
-        // Запрашиваем разрешения и запускаем камеру
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             startCamera();
         } else {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA}, CAMERA_PERMISSION_CODE);
         }
 
-        // ... внутри onCreate ...
-        loadingOverlay = findViewById(R.id.loadingOverlay);
-        progressBar = findViewById(R.id.progressBar);
-        loadingText = findViewById(R.id.loadingText);
-
-        // Показываем загрузку при старте приложения
         showLoading("Инициализация мозга...", true);
-        yukiBrain = new YukiBrainManager(this, success -> {
-            runOnUiThread(() -> {
-                hideLoading();
-                if (success) {
-                    Toast.makeText(this, "Мозг Юки готов!", Toast.LENGTH_SHORT).show();
-                }
-            });
-        });
-
         startSceneMonitor();
 
         btnSend.setOnClickListener(v -> {
             String text = userInputText.getText().toString();
             if (text.isEmpty()) return;
 
-            Bitmap currentFrame = viewFinder.getBitmap();
-
             if (modelSwitch.isChecked()) {
-                sendToLocalModel(text, currentFrame);
+                sendToLocalModel(text);
             } else {
-                sendToGeminiCloud(text, currentFrame);
+                sendToGeminiCloud(text, viewFinder.getBitmap());
             }
             userInputText.setText("");
         });
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        Intent intent = new Intent(this, YukiBrainService.class);
+        startForegroundService(intent);
+        bindService(intent, brainConnection, Context.BIND_AUTO_CREATE);
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        if (brainBound) {
+            unbindService(brainConnection);
+            brainBound = false;
+        }
+        // сервис не останавливаем — пусть живёт в фоне
     }
 
     private void importModelFile(Uri uri) {
@@ -146,7 +201,7 @@ public class LiveVisionActivity extends AppCompatActivity {
             try {
                 long totalSize = getFileSize(uri);
                 InputStream inputStream = getContentResolver().openInputStream(uri);
-                File destinationFile = new File(getFilesDir(), "yuki_model.gguf");
+                File destinationFile = new File(getFilesDir(), "gemma4_e4b.litertlm");
                 FileOutputStream outputStream = new FileOutputStream(destinationFile);
 
                 byte[] buffer = new byte[8192];
@@ -177,14 +232,8 @@ public class LiveVisionActivity extends AppCompatActivity {
                 // Копирование завершено, запускаем загрузку в оперативную память
                 runOnUiThread(() -> {
                     showLoading("Загрузка модели в ОЗУ...", true);
-                    yukiBrain.reloadModel(LiveVisionActivity.this, success -> {
-                        runOnUiThread(() -> {
-                            hideLoading();
-                            Toast.makeText(this, "Прошивка Юки обновлена!", Toast.LENGTH_SHORT).show();
-                        });
-                    });
+                    sendReloadModel();
                 });
-
             } catch (Exception e) {
                 Log.e("YukiImport", "Ошибка импорта: ", e);
                 runOnUiThread(() -> {
@@ -193,6 +242,63 @@ public class LiveVisionActivity extends AppCompatActivity {
                 });
             }
         }).start();
+    }
+
+    private void sendReloadModel() {
+        if (!brainBound) return;
+        try {
+            brainService.send(Message.obtain(null, YukiBrainService.MSG_RELOAD_MODEL));
+        } catch (RemoteException e) {
+            Log.e("LiveVision", "reload failed", e);
+        }
+    }
+
+    // вызывается ТОЛЬКО на UI-потоке (viewFinder.getBitmap() того требует)
+    private byte[] captureCompressedFrame() {
+        Bitmap frame = viewFinder.getBitmap();
+        if (frame == null) return null;
+
+        int targetSize = 768; // модель обычно даунсемплит сама, крупнее 768 не имеет смысла
+        int w = frame.getWidth();
+        int h = frame.getHeight();
+        float scale = Math.min((float) targetSize / w, (float) targetSize / h);
+        int newW = Math.round(w * scale);
+        int newH = Math.round(h * scale);
+
+        Bitmap scaled = Bitmap.createScaledBitmap(frame, newW, newH, true); // сохраняем пропорции
+
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        scaled.compress(Bitmap.CompressFormat.JPEG, 90, baos); // подняли качество 85→90
+        return baos.toByteArray();
+    }
+
+    private void sendToLocalModel(String text) {
+        if (!brainBound || !modelReady) {
+            finishSpeaking("Мозг ещё не готов, подожди секунду");
+            return;
+        }
+        startSpeaking();
+
+        // getBitmap() требует UI-поток — обязательно прыгаем сюда,
+        // даже если sendToLocalModel вызван из фонового startSceneMonitor
+        runOnUiThread(() -> {
+            byte[] imageBytes = captureCompressedFrame();
+            dispatchAsk(text, imageBytes);
+        });
+    }
+
+    private void dispatchAsk(String text, byte[] imageBytes) {
+        Bundle data = new Bundle();
+        data.putString("text", text);
+        if (imageBytes != null) data.putByteArray("image", imageBytes);
+
+        Message msg = Message.obtain(null, YukiBrainService.MSG_ASK);
+        msg.setData(data);
+        try {
+            brainService.send(msg);
+        } catch (RemoteException e) {
+            finishSpeaking("[Ошибка связи с мозгом]: " + e.getMessage());
+        }
     }
 
     // Вспомогательный метод для получения реального размера файла из Uri
@@ -279,16 +385,9 @@ public class LiveVisionActivity extends AppCompatActivity {
                     boolean sceneChanged = hasSignificantChange(previousObjects, currentObjects);
 
                     if (sceneChanged) {
-                        // Сохраняем новое состояние сцены
                         previousObjects = new ArrayList<>(currentObjects);
-
                         String prompt = "Ты только что заметила эти новые объекты в кадре: " + currentObjects.toString() + ". Коротко и эмоционально отреагируй на это.";
-
-                        // Прыгаем в главный поток, чтобы легально забрать картинку с экрана
-                        runOnUiThread(() -> {
-                            Bitmap frame = viewFinder.getBitmap(); // Теперь Android не будет ругаться!
-                            sendToLocalModel(prompt, frame);
-                        });
+                        sendToLocalModel(prompt);
                     }
                 } catch (InterruptedException e) {
                     e.printStackTrace();
@@ -305,33 +404,6 @@ public class LiveVisionActivity extends AppCompatActivity {
         return false;
     }
 
-    private void sendToLocalModel(String text, Bitmap frame) {
-        startSpeaking();
-        List<String> visibleItems = yukiLocalVision.getCurrentObjects();
-        String contextString = visibleItems.isEmpty() ? "Ничего особенного" : String.join(", ", visibleItems);
-
-        yukiBrain.askYuki(text, contextString, new YukiBrainManager.BrainCallback() {
-            @Override
-            public void onThinking() {
-                runOnUiThread(() -> {
-                    yukiSpeechText.setTextColor(android.graphics.Color.parseColor("#B388FF"));
-                    yukiSpeechText.setText("Юки: Думаю...");
-                });
-            }
-
-            @Override
-            public void onResponse(String responseText) {
-                runOnUiThread(() -> finishSpeaking(responseText));
-                // TODO: Передать responseText в AnimeTtsManager
-            }
-
-            @Override
-            public void onError(String error) {
-                runOnUiThread(() -> finishSpeaking("[Системная ошибка]: " + error));
-            }
-        });
-    }
-
     private void sendToGeminiCloud(String text, Bitmap frame) {
         startSpeaking();
         yukiSpeechText.setText("Юки (Gemini Flash): Отправляю в облако...");
@@ -340,15 +412,19 @@ public class LiveVisionActivity extends AppCompatActivity {
     }
 
     private void startSpeaking() {
-        isYukiSpeaking = true;
-        btnSend.setEnabled(false);
+        runOnUiThread(() -> {
+            isYukiSpeaking = true;
+            btnSend.setEnabled(false);
+        });
     }
 
     private void finishSpeaking(String text) {
-        yukiSpeechText.setText("Юки: " + text);
-        isYukiSpeaking = false;
-        lastSpeechEndTime = System.currentTimeMillis();
-        btnSend.setEnabled(true);
+        runOnUiThread(() -> {
+            yukiSpeechText.setText("Юки: " + text);
+            isYukiSpeaking = false;
+            lastSpeechEndTime = System.currentTimeMillis();
+            btnSend.setEnabled(true);
+        });
     }
 
     private void openFilePicker() {

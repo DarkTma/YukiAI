@@ -3,6 +3,7 @@ package com.example.yukiai;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.util.Log;
+
 import androidx.annotation.NonNull;
 import androidx.camera.core.ImageAnalysis;
 import androidx.camera.core.ImageProxy;
@@ -15,24 +16,21 @@ import com.google.mediapipe.tasks.vision.objectdetector.ObjectDetector;
 import com.google.mediapipe.tasks.vision.objectdetector.ObjectDetectorResult;
 import com.google.mediapipe.tasks.components.containers.Detection;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class YukiLocalVision implements ImageAnalysis.Analyzer {
 
     private static final String TAG = "YukiVision";
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
-
     private ObjectDetector objectDetector;
     private volatile List<String> currentObjects = new ArrayList<>();
     private long lastAnalyzeTime = 0;
 
     public YukiLocalVision(Context context) {
-        // Запускаем тяжелую загрузку модели в фоне!
         executor.execute(() -> {
             try {
                 BaseOptions baseOptions = BaseOptions.builder()
@@ -50,7 +48,6 @@ public class YukiLocalVision implements ImageAnalysis.Analyzer {
 
                 this.objectDetector = ObjectDetector.createFromOptions(context, options);
                 Log.d(TAG, "ObjectDetector успешно создан в фоне!");
-
             } catch (Exception e) {
                 Log.e(TAG, "Ошибка загрузки модели", e);
             }
@@ -69,10 +66,8 @@ public class YukiLocalVision implements ImageAnalysis.Analyzer {
         try {
             Bitmap bitmap = imageProxy.toBitmap();
             MPImage mpImage = new BitmapImageBuilder(bitmap).build();
-
             long frameTimestamp = imageProxy.getImageInfo().getTimestamp();
             objectDetector.detectAsync(mpImage, frameTimestamp);
-
         } catch (Exception e) {
             Log.e(TAG, "Ошибка анализа кадра", e);
         } finally {

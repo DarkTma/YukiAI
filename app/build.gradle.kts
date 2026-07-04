@@ -59,6 +59,7 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+
 }
 
 dependencies {
@@ -72,17 +73,19 @@ dependencies {
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
 
     implementation("com.google.mediapipe:tasks-vision:0.10.14")
-    implementation("com.google.mediapipe:tasks-genai:0.10.14")
+//    implementation("com.google.mediapipe:tasks-genai:0.10.14")
 
+    implementation("com.google.code.gson:gson:2.10.1")
 
-    implementation("org.nanohttpd:nanohttpd:2.3.1'")
-    implementation("com.google.code.gson:gson:2.10.1") // Для работы с JSON
-
+    implementation("com.google.ai.edge.litertlm:litertlm-android:latest.release")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1") // добавить
 
     implementation(libs.camera.core)
     implementation(libs.camera.view)
     implementation("androidx.camera:camera-lifecycle:1.3.4")
     implementation("androidx.camera:camera-camera2:1.3.4")
+
+    implementation("androidx.lifecycle:lifecycle-service:2.8.7")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.ext.junit)

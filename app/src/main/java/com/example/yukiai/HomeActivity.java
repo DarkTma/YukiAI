@@ -1023,10 +1023,8 @@ public class HomeActivity extends AppCompatActivity {
     }
 
     private void openSettingsDialog() {
-        // 1. Создаем View из нашего XML
         View view = LayoutInflater.from(this).inflate(R.layout.dialog_settings, null);
 
-        // 2. Инициализируем элементы внутри View
         RadioGroup genderGroup = view.findViewById(R.id.voiceGenderGroup);
         RadioButton female = view.findViewById(R.id.voiceFemale);
         RadioGroup colorGroup = view.findViewById(R.id.colorGroup);
@@ -1038,11 +1036,13 @@ public class HomeActivity extends AppCompatActivity {
         RadioButton colorBlack = view.findViewById(R.id.colorBlack);
 
         Button btnStartHelper = view.findViewById(R.id.btnStartHelper);
-
-        // ДОБАВЛЯЕМ НАШУ НОВУЮ КНОПКУ
         Button btnGameYuki = view.findViewById(R.id.btnGameYuki);
 
-        // 3. Настраиваем Спиннер с белым текстом
+        // НОВЫЕ ЭЛЕМЕНТЫ
+        Button btnLiveYuki = view.findViewById(R.id.btnLiveYuki);
+        Spinner liveModeSpinner = view.findViewById(R.id.liveModeSpinner);
+
+        // Спиннер языка (как было)
         ArrayAdapter<CharSequence> adapter = ArrayAdapter.createFromResource(
                 this,
                 R.array.tts_languages,
@@ -1051,7 +1051,15 @@ public class HomeActivity extends AppCompatActivity {
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         languageSpinner.setAdapter(adapter);
 
-        // 4. Загружаем сохраненные настройки
+        // НОВЫЙ Спиннер режима Live Yuki
+        ArrayAdapter<CharSequence> liveModeAdapter = ArrayAdapter.createFromResource(
+                this,
+                R.array.yuki_speak_modes,
+                R.layout.spinner_item
+        );
+        liveModeAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        liveModeSpinner.setAdapter(liveModeAdapter);
+
         SharedPreferences prefs = getSharedPreferences("npc_settings", Context.MODE_PRIVATE);
         boolean isBlack = prefs.getBoolean("playing_as_black", false);
 
@@ -1060,14 +1068,17 @@ public class HomeActivity extends AppCompatActivity {
 
         String gender = prefs.getString("voice_gender", "female");
         int language = prefs.getInt("voice_language", 0);
+        int liveMode = prefs.getInt("live_yuki_mode", 0); // НОВОЕ
 
         if (gender.equals("female")) female.setChecked(true);
 
         if (language < adapter.getCount()) {
             languageSpinner.setSelection(language);
         }
+        if (liveMode < liveModeAdapter.getCount()) { // НОВОЕ
+            liveModeSpinner.setSelection(liveMode);
+        }
 
-        // 5. Создаем и показываем диалог
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setView(view)
                 .setCancelable(true)
@@ -1077,7 +1088,6 @@ public class HomeActivity extends AppCompatActivity {
             dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
         }
 
-        // Логика кнопки шахматной Юки
         btnStartHelper.setOnClickListener(v -> {
             boolean selectedAsBlack = colorGroup.getCheckedRadioButtonId() == R.id.colorBlack;
             prefs.edit().putBoolean("playing_as_black", selectedAsBlack).apply();
@@ -1085,22 +1095,34 @@ public class HomeActivity extends AppCompatActivity {
             startFloatingYuki();
         });
 
-        // ЛОГИКА НОВОЙ КНОПКИ ДЛЯ ГЕЙМЕРСКОЙ ЮКИ
         btnGameYuki.setOnClickListener(v -> {
-            dialog.dismiss(); // Просто закрываем настройки
-            startGameYuki();  // Вызываем метод запуска (его нужно будет создать)
+            dialog.dismiss();
+            startGameYuki();
         });
 
-        // 6. Логика кнопок сохранения и отмены
+        // ЛОГИКА КНОПКИ LIVE YUKI
+        btnLiveYuki.setOnClickListener(v -> {
+            int selectedMode = liveModeSpinner.getSelectedItemPosition();
+            prefs.edit().putInt("live_yuki_mode", selectedMode).apply();
+
+            dialog.dismiss();
+
+            Intent intent = new Intent(HomeActivity.this, LiveVisionActivity.class);
+            intent.putExtra("live_mode", selectedMode); // передаём выбор в новую activity
+            startActivity(intent);
+        });
+
         btnSave.setOnClickListener(v -> {
             boolean selectedAsBlack = colorGroup.getCheckedRadioButtonId() == R.id.colorBlack;
             String selectedGender = genderGroup.getCheckedRadioButtonId() == R.id.voiceFemale ? "female" : "male";
             int selectedLanguage = languageSpinner.getSelectedItemPosition();
+            int selectedLiveMode = liveModeSpinner.getSelectedItemPosition(); // НОВОЕ
 
             prefs.edit()
                     .putString("voice_gender", selectedGender)
                     .putInt("voice_language", selectedLanguage)
                     .putBoolean("playing_as_black", selectedAsBlack)
+                    .putInt("live_yuki_mode", selectedLiveMode) // НОВОЕ
                     .apply();
 
             Toast.makeText(this, "Настройки сохранены", Toast.LENGTH_SHORT).show();
@@ -1111,7 +1133,6 @@ public class HomeActivity extends AppCompatActivity {
 
         dialog.show();
     }
-
     private void startVoiceInput(EditText editTextInput) {
         if (speechRecognizer != null) {
             speechRecognizer.destroy();

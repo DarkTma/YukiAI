@@ -2,6 +2,7 @@ package com.example.yukiai;
 
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.widget.VideoView;
 import androidx.appcompat.app.AppCompatActivity;
@@ -26,6 +27,13 @@ public class MainActivity extends AppCompatActivity {
             // Когда видео закончилось, переходим на HomeActivity
             startNextActivity();
         });
+
+        Intent intent = new Intent(this, YukiOrchestratorService.class);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent);
+        } else {
+            startService(intent);
+        }
 
         // Запускаем видео
         videoView.start();

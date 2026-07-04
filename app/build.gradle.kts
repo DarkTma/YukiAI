@@ -12,14 +12,13 @@ android {
 
     defaultConfig {
         applicationId = "com.example.yukiai"
-        minSdk = 24
+        minSdk = 30
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // --- ЧТЕНИЕ КЛЮЧА ---
         val properties = Properties()
         val localPropertiesFile = project.rootProject.file("local.properties")
         if (localPropertiesFile.exists()) {
@@ -27,9 +26,20 @@ android {
         }
 
         val apiKey = properties.getProperty("GEMINI_API_KEY") ?: ""
-
-        // ИСПРАВЛЕННАЯ СТРОКА:
         buildConfigField("String", "GEMINI_API_KEY", "\"$apiKey\"")
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+            pickFirsts += "lib/**/libsherpa-onnx-*.so"
+            pickFirsts += "lib/**/libonnxruntime*.so"
+            pickFirsts += "lib/**/libmediapipe_tasks_vision_jni.so"
+        }
+    }
+
+    aaptOptions {
+        noCompress("tflite")
     }
 
     buildFeatures {
@@ -58,7 +68,22 @@ dependencies {
     implementation(libs.constraintlayout)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.java-websocket:Java-WebSocket:1.5.3")
-    implementation(files("libs/sherpa-onnx-1.13.3.aar"))
+
+    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
+
+    implementation("com.google.mediapipe:tasks-vision:0.10.14")
+    implementation("com.google.mediapipe:tasks-genai:0.10.14")
+
+
+    implementation("org.nanohttpd:nanohttpd:2.3.1'")
+    implementation("com.google.code.gson:gson:2.10.1") // Для работы с JSON
+
+
+    implementation(libs.camera.core)
+    implementation(libs.camera.view)
+    implementation("androidx.camera:camera-lifecycle:1.3.4")
+    implementation("androidx.camera:camera-camera2:1.3.4")
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.ext.junit)
     androidTestImplementation(libs.espresso.core)

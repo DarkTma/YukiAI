@@ -1,134 +1,238 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:background="@drawable/bg_dialogue_style"
-    android:orientation="vertical"
-    android:padding="24dp">
-
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center"
-        android:text="Настройки Юки"
-        android:textColor="#75c3ff"
-        android:textSize="20sp"
-        android:textStyle="bold"
-        android:layout_marginBottom="20dp"/>
-
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Голос:"
-        android:textColor="#addcff"
-        android:textSize="14sp"
-        android:layout_marginBottom="8dp"/>
-
-    <RadioGroup
-        android:id="@+id/voiceGenderGroup"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:layout_marginBottom="16dp">
-
-        <RadioButton
-            android:id="@+id/voiceFemale"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Женский"
-            android:textColor="#FFFFFF"
-            android:buttonTint="#75c3ff"/>
-
-    </RadioGroup>
-
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Язык общения:"
-        android:textColor="#addcff"
-        android:textSize="14sp"
-        android:layout_marginBottom="8dp"/>
-
-    <Spinner
-        android:id="@+id/languageSpinner"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:backgroundTint="#75c3ff"
-        android:minHeight="48dp"
-        android:layout_marginBottom="24dp"/>
-
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Ваш цвет:"
-        android:textColor="#FFFFFF"
-        android:layout_marginTop="10dp"/>
-
-    <RadioGroup
-        android:id="@+id/colorGroup"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal">
-
-        <RadioButton
-            android:id="@+id/colorWhite"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Белые"
-            android:textColor="#FFFFFF"
-            android:checked="true"/>
-
-        <RadioButton
-            android:id="@+id/colorBlack"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Черные"
-            android:textColor="#FFFFFF"
-            android:layout_marginStart="20dp"/>
-    </RadioGroup>
-
-    <Button
-        android:id="@+id/btnStartHelper"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Запустить режим помощника по хахматам"
-        android:textColor="#000000"
-        android:backgroundTint="#75c3ff"
-        android:textStyle="bold"
-        android:layout_marginBottom="24dp"/>
-
-    <Button
-        android:id="@+id/btnGameYuki"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Запустить игровую Юки"
-        android:textColor="#000000"
-        android:backgroundTint="#75c3ff"
-        android:textStyle="bold"
-        android:layout_marginBottom="24dp"/>
+    android:maxHeight="560dp"
+    android:scrollbars="none">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:gravity="end">
+        android:background="@drawable/bg_dialogue_style"
+        android:orientation="vertical"
+        android:padding="24dp">
 
-        <Button
-            android:id="@+id/btnCancel"
-            android:layout_width="wrap_content"
+        <!-- ЗАГОЛОВОК -->
+        <TextView
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Отмена"
+            android:gravity="center"
+            android:text="Настройки Юки"
             android:textColor="#75c3ff"
-            style="?android:attr/borderlessButtonStyle"
-            android:layout_marginEnd="8dp"/>
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.02"
+            android:layout_marginBottom="4dp"/>
 
-        <Button
-            android:id="@+id/btnSave"
-            android:layout_width="wrap_content"
+        <View
+            android:layout_width="48dp"
+            android:layout_height="2dp"
+            android:layout_gravity="center"
+            android:background="#75c3ff"
+            android:layout_marginBottom="20dp"/>
+
+        <!-- СЕКЦИЯ: ГОЛОС И ЯЗЫК -->
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Сохранить"
-            android:textColor="#000000"
-            android:backgroundTint="#75c3ff"/>
-    </LinearLayout>
+            android:orientation="vertical"
+            android:background="@drawable/bg_section_card"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp">
 
-</LinearLayout>
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="ГОЛОС"
+                android:textColor="#addcff"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.08"
+                android:layout_marginBottom="8dp"/>
+
+            <RadioGroup
+                android:id="@+id/voiceGenderGroup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="16dp">
+
+                <RadioButton
+                    android:id="@+id/voiceFemale"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Женский"
+                    android:textColor="#FFFFFF"
+                    android:buttonTint="#75c3ff"/>
+
+            </RadioGroup>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="ЯЗЫК ОБЩЕНИЯ"
+                android:textColor="#addcff"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.08"
+                android:layout_marginBottom="8dp"/>
+
+            <Spinner
+                android:id="@+id/languageSpinner"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_spinner_rounded"
+                android:minHeight="48dp"/>
+
+        </LinearLayout>
+
+        <!-- СЕКЦИЯ: ШАХМАТЫ -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/bg_section_card"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="ВАШ ЦВЕТ"
+                android:textColor="#addcff"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.08"
+                android:layout_marginBottom="8dp"/>
+
+            <RadioGroup
+                android:id="@+id/colorGroup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="16dp">
+
+                <RadioButton
+                    android:id="@+id/colorWhite"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Белые"
+                    android:textColor="#FFFFFF"
+                    android:checked="true"/>
+
+                <RadioButton
+                    android:id="@+id/colorBlack"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Черные"
+                    android:textColor="#FFFFFF"
+                    android:layout_marginStart="20dp"/>
+            </RadioGroup>
+
+            <Button
+                android:id="@+id/btnStartHelper"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Режим помощника по шахматам"
+                android:textColor="#75c3ff"
+                android:textAllCaps="false"
+                android:background="@drawable/bg_btn_outline"
+                android:paddingTop="12dp"
+                android:paddingBottom="12dp"/>
+
+        </LinearLayout>
+
+        <!-- СЕКЦИЯ: РЕЖИМЫ ЗАПУСКА -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/bg_section_card"
+            android:padding="16dp"
+            android:layout_marginBottom="20dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="РЕЖИМЫ ЮКИ"
+                android:textColor="#addcff"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.08"
+                android:layout_marginBottom="10dp"/>
+
+            <Button
+                android:id="@+id/btnGameYuki"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Игровая Юки"
+                android:textColor="#75c3ff"
+                android:textAllCaps="false"
+                android:background="@drawable/bg_btn_outline"
+                android:paddingTop="12dp"
+                android:paddingBottom="12dp"
+                android:layout_marginBottom="12dp"/>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Режим Live Yuki:"
+                android:textColor="#addcff"
+                android:textSize="13sp"
+                android:layout_marginBottom="8dp"/>
+
+            <Spinner
+                android:id="@+id/liveModeSpinner"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_spinner_rounded"
+                android:minHeight="48dp"
+                android:layout_marginBottom="12dp"/>
+
+            <Button
+                android:id="@+id/btnLiveYuki"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Запустить Live Yuki"
+                android:textColor="#000000"
+                android:textStyle="bold"
+                android:textAllCaps="false"
+                android:background="@drawable/bg_btn_filled"
+                android:paddingTop="12dp"
+                android:paddingBottom="12dp"/>
+
+        </LinearLayout>
+
+        <!-- НИЖНЯЯ ПАНЕЛЬ ДЕЙСТВИЙ -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="end"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnCancel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Отмена"
+                android:textColor="#addcff"
+                android:textAllCaps="false"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_marginEnd="12dp"/>
+
+            <Button
+                android:id="@+id/btnSave"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Сохранить"
+                android:textColor="#000000"
+                android:textStyle="bold"
+                android:textAllCaps="false"
+                android:background="@drawable/bg_btn_filled"
+                android:paddingStart="24dp"
+                android:paddingEnd="24dp"/>
+        </LinearLayout>
+
+    </LinearLayout>
+</ScrollView>

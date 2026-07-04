@@ -11,6 +11,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 import java.io.File
+import com.google.ai.edge.litertlm.ExperimentalApi
+import com.google.ai.edge.litertlm.ExperimentalFlags
 
 class YukiBrainManager(private val appContext: Context, onComplete: LoadCallback?) {
 
@@ -26,8 +28,50 @@ class YukiBrainManager(private val appContext: Context, onComplete: LoadCallback
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     @Volatile private var engine: Engine? = null
-    @Volatile private var conversation: Conversation? = null   // теперь поле класса
+    @Volatile private var conversation: Conversation? = null
     @Volatile private var isModelLoaded = false
+
+    private val sceneHistory = ArrayDeque<String>()  // ограничение размера — в addToHistory
+    private var messageCount = 0
+    private val RESET_EVERY = 6
+
+    private fun addToHistory(scene: String) {
+        if (sceneHistory.size >= 4) sceneHistory.removeFirst()
+        sceneHistory.addLast(scene)
+    }
+
+    // Пересоздать конверсацию, вшив краткое резюме прошлого
+    private fun resetConversation(summary: String?) {
+        conversation?.close()
+        val engine = engine ?: return
+
+        val systemText = buildString {
+            append("Ты — Юки, милая и весёлая подружка. Отвечай по-русски, на 'ты', коротко.\n")
+            if (summary != null) {
+                append("Из того что было раньше ты помнишь: $summary\n")
+            }
+        }
+
+        val config = ConversationConfig(
+            samplerConfig = SamplerConfig(topK = 40, topP = 0.9, temperature = 0.9)
+        )
+        conversation = engine.createConversation(config)
+        messageCount = 0
+
+        // Первым сообщением вшиваем память — модель "знает" прошлое
+        if (summary != null) {
+            scope.launch {
+                try {
+                    conversation?.sendMessageAsync(
+                        Contents.of(Content.Text("[Системный контекст]: $systemText"))
+                    )?.collect {}
+                } catch (e: Exception) {
+                    Log.w("YukiBrain", "Не смог вшить контекст: ${e.message}")
+                }
+            }
+        }
+    }
+
 
     init {
         loadModel(appContext, onComplete)
@@ -78,6 +122,8 @@ class YukiBrainManager(private val appContext: Context, onComplete: LoadCallback
     ): Engine? {
         return try {
             Log.e("YukiBrain", "Пробуем CPU...")
+            @OptIn(ExperimentalApi::class)
+            ExperimentalFlags.enableSpeculativeDecoding = true
             val config = EngineConfig(
                 modelPath = modelPath,
                 backend = Backend.CPU(),
@@ -104,9 +150,8 @@ class YukiBrainManager(private val appContext: Context, onComplete: LoadCallback
         loadModel(context, onComplete)
     }
 
-    fun askYuki(userMessage: String, frame: Bitmap?, callback: BrainCallback) {
-        val currentConversation = conversation
-        if (!isModelLoaded || currentConversation == null) {
+    fun askYuki(userMessage: String, frame: Bitmap?, sceneDescription: String? = null, callback: BrainCallback) {
+        if (!isModelLoaded || conversation == null) {
             callback.onError("Подожди, мозг ещё загружается!")
             return
         }
@@ -115,26 +160,37 @@ class YukiBrainManager(private val appContext: Context, onComplete: LoadCallback
 
         scope.launch {
             try {
+                if (messageCount >= RESET_EVERY && sceneHistory.isNotEmpty()) {
+                    val summary = sceneHistory.joinToString(", затем ")
+                    resetConversation(summary)
+                    kotlinx.coroutines.delay(300)
+                }
+
                 val contentList = mutableListOf<Content>()
+
                 if (frame != null) {
                     val baos = ByteArrayOutputStream()
                     frame.compress(Bitmap.CompressFormat.JPEG, 85, baos)
                     contentList.add(Content.ImageBytes(baos.toByteArray()))
                 }
+
+                // ОДИН текстовый блок — персона + история + сообщение
+                val historyHint = if (sceneHistory.isNotEmpty())
+                    "До этого ты видела: ${sceneHistory.takeLast(2).joinToString(", ")}. А СЕЙЧАС новый кадр. "
+                else ""
+
                 contentList.add(Content.Text(
-                    "Ты — Юки, милая, заботливая и веселая подружка (или даже младшая сестренка). Ты ведешь себя как настоящий, живой человек. Ты очень привязана к пользователю, любишь болтать с ним обо всем на свете и всегда готова ласково поддержать. Отвечай по-русски.\nПользователь: $userMessage"
+                    "Ты — Юки, милая и весёлая подружка. Отвечай по-русски, на 'ты'.\n" +
+                            "${historyHint}Пользователь: $userMessage"
                 ))
 
+                if (sceneDescription != null) addToHistory(sceneDescription)
+
                 val fullResponse = StringBuilder()
+                conversation?.sendMessageAsync(Contents.of(*contentList.toTypedArray()))
+                    ?.collect { message -> fullResponse.append(message.toString()) }
 
-                // Flow-based API — рекомендуемый способ для корутин
-                currentConversation
-                    .sendMessageAsync(Contents.of(*contentList.toTypedArray()))
-                    .collect { message ->
-                        fullResponse.append(message.toString())
-                    }
-
-                // collect завершился — значит генерация закончена
+                messageCount++
                 callback.onResponse(fullResponse.toString().trim())
 
             } catch (e: Exception) {
@@ -143,6 +199,8 @@ class YukiBrainManager(private val appContext: Context, onComplete: LoadCallback
             }
         }
     }
+
+
 
     fun shutdown() {
         scope.cancel()

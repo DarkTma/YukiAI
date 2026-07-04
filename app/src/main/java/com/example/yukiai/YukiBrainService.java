@@ -102,13 +102,13 @@ public class YukiBrainService extends LifecycleService {
     }
 
     private void handleAsk(String text, @Nullable Bitmap image) {
-        brainManager.askYuki(text, image, new YukiBrainManager.BrainCallback() {
+        // Добавили null третьим параметром
+        brainManager.askYuki(text, image, null, new YukiBrainManager.BrainCallback() {
             @Override public void onThinking() { sendToClient(MSG_THINKING, null); }
             @Override public void onResponse(String t) { sendToClient(MSG_RESPONSE, t); }
             @Override public void onError(String error) { sendToClient(MSG_ERROR, error); }
         });
     }
-
     private void handleReload() {
         lastModelLoadedState = null; // на время перезагрузки статус снова "неизвестен"
         brainManager.reloadModel(getApplicationContext(), success -> {

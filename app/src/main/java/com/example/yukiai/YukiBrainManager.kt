@@ -80,21 +80,13 @@ class YukiBrainManager(private val appContext: Context, onComplete: LoadCallback
     private fun loadModel(context: Context, onComplete: LoadCallback?) {
         scope.launch {
             try {
-                val modelFile = File(context.filesDir, "gemma4_e4b.litertlm")
-                Log.e("YukiBrain", "Ищу файл: ${modelFile.absolutePath}")
-                Log.e("YukiBrain", "Файл существует: ${modelFile.exists()}")
                 Log.e("YukiBrain", "Файлы в filesDir: ${context.filesDir.listFiles()?.map { it.name }}")
-                if (!modelFile.exists()) {
-                    onComplete?.onLoaded(false)
-                    return@launch
-                }
 
-                val nativeLibDir = context.applicationInfo.nativeLibraryDir
                 val cacheDir = context.cacheDir.path
-                val modelPath = modelFile.absolutePath
 
-                val newEngine = tryCreateEngine(modelPath, nativeLibDir, cacheDir)
+                val newEngine = tryCreateEngine(context.filesDir, cacheDir)
                     ?: run {
+                        Log.e("YukiBrain", "❌ Ни одна конфигурация движка не завелась")
                         onComplete?.onLoaded(false)
                         return@launch
                     }
@@ -115,31 +107,110 @@ class YukiBrainManager(private val appContext: Context, onComplete: LoadCallback
         }
     }
 
-    private suspend fun tryCreateEngine(
+    // Одна попытка создания движка: какой файл модели + какие бэкенды.
+    // Бэкенды создаём лямбдами, чтобы для каждой попытки был свежий объект.
+    private data class EngineAttempt(
+        val modelFileName: String,
+        val llmBackend: () -> Backend,
+        val visionBackend: () -> Backend,
+        val label: String
+    )
+
+    private suspend fun tryCreateEngine(filesDir: File, cacheDir: String): Engine? {
+        @OptIn(ExperimentalApi::class)
+        ExperimentalFlags.enableSpeculativeDecoding = true
+
+        // Каскад: от самого умного/быстрого к самому надёжному.
+        // Первая же успешная конфигурация выигрывает. Логи покажут, какая именно.
+        val attempts = listOf(
+            // E4B умнее, но на GPU капризна (issue #1206). Зрение на CPU — частый рабочий вариант.
+            EngineAttempt("gemma4_e4b.litertlm", { Backend.GPU() }, { Backend.CPU() }, "E4B / GPU-LLM + CPU-vision"),
+            // Всё на GPU — если вдруг зрение на GPU тоже поедет.
+            EngineAttempt("gemma4_e4b.litertlm", { Backend.GPU() }, { Backend.GPU() }, "E4B / GPU-LLM + GPU-vision"),
+            // E2B меньше и на GPU заводится чаще — быстрый и всё ещё мультимодальный.
+            EngineAttempt("gemma4_e2b.litertlm", { Backend.GPU() }, { Backend.CPU() }, "E2B / GPU-LLM + CPU-vision"),
+            // Финальный fallback — как было раньше, гарантированно работает.
+            EngineAttempt("gemma4_e4b.litertlm", { Backend.CPU() }, { Backend.CPU() }, "E4B / CPU (fallback)")
+        )
+
+        for (a in attempts) {
+            val f = File(filesDir, a.modelFileName)
+            if (!f.exists()) {
+                Log.e("YukiBrain", "Пропускаю «${a.label}»: нет файла ${a.modelFileName}")
+                continue
+            }
+            val e = buildEngine(f.absolutePath, cacheDir, a.llmBackend(), a.visionBackend(), a.label)
+            if (e != null) {
+                Log.e("YukiBrain", "✅ АКТИВНАЯ КОНФИГУРАЦИЯ: ${a.label}")
+                return e
+            }
+        }
+        return null
+    }
+
+    private fun buildEngine(
         modelPath: String,
-        nativeLibDir: String,
-        cacheDir: String
+        cacheDir: String,
+        backend: Backend,
+        visionBackend: Backend,
+        label: String
     ): Engine? {
         return try {
-            Log.e("YukiBrain", "Пробуем CPU...")
-            @OptIn(ExperimentalApi::class)
-            ExperimentalFlags.enableSpeculativeDecoding = true
+            Log.e("YukiBrain", "Пробуем $label...")
             val config = EngineConfig(
                 modelPath = modelPath,
-                backend = Backend.CPU(),
-                visionBackend = Backend.CPU(),
+                backend = backend,
+                visionBackend = visionBackend,
 //                maxNumTokens = 512,
                 cacheDir = cacheDir
             )
             val e = Engine(config)
             e.initialize()
-            Log.e("YukiBrain", "CPU: OK")
+            Log.e("YukiBrain", "$label: OK")
             e
         } catch (e: Exception) {
-            Log.e("YukiBrain", "CPU не взлетел: ${e.message}")
+            Log.e("YukiBrain", "$label не взлетел: ${e.message}")
+            e.printStackTrace()
             null
         }
     }
+
+//    private suspend fun tryCreateEngine(
+//        modelPath: String,
+//        nativeLibDir: String,
+//        cacheDir: String
+//    ): Engine? {
+//        try {
+//            // Обязательно предупреждаем коллбэком интерфейс, что сейчас будет долго
+//            Log.e("YukiBrain", "🚀 ЗАПУСК NPU! Сейчас будет JIT-компиляция. Это может занять до 2 минут...")
+//
+//            @OptIn(ExperimentalApi::class)
+//            ExperimentalFlags.enableSpeculativeDecoding = true
+//
+//            val npuConfig = EngineConfig(
+//                modelPath = modelPath, // Твой обычный скачанный файл на 2.5 ГБ
+//                backend = Backend.NPU(), // Требуем NPU
+//                visionBackend = Backend.GPU(), // Зрение лучше оставить на GPU
+//
+//                // ВОТ ЭТО САМОЕ ВАЖНОЕ: Сюда сохранится граф после первой долгой загрузки!
+//                cacheDir = cacheDir
+//            )
+//
+//            // Во время вызова engine.initialize() телефон зависнет на компиляции.
+//            // Не пугайся, если Android предложит "Закрыть приложение или подождать".
+//            // Обязательно жми "Подождать"!
+//            val engine = Engine(npuConfig)
+//            engine.initialize()
+//
+//            Log.e("YukiBrain", "✅ NPU УСПЕШНО СКОМПИЛИРОВАН И СОХРАНЕН В КЭШ!")
+//            return engine
+//
+//        } catch (e: Exception) {
+//            Log.e("YukiBrain", "❌ NPU не вывез JIT-компиляцию: ${e.message}")
+//            e.printStackTrace()
+//            return null
+//        }
+//    }
 
     fun reloadModel(context: Context, onComplete: LoadCallback?) {
         isModelLoaded = false
